@@ -131,15 +131,15 @@ async fn main() -> () {
     }
     
     //Lets copy the file to tmp, ready for sharing!
-    let current_time = SystemTime::now().duration_since(UNIX_EPOCH).expect("Time went backwards").as_secs();
-    let tmp_location: path::PathBuf = [env::temp_dir().to_str().unwrap(), NAME, &format!("{}-{}", current_time, args.value_of("FILE").unwrap())].iter().collect(); //TODO error checking
+    // let current_time = SystemTime::now().duration_since(UNIX_EPOCH).expect("Time went backwards").as_secs();
+    // let tmp_location: path::PathBuf = [env::temp_dir().to_str().unwrap(), NAME, &format!("{}-{}", current_time, args.value_of("FILE").unwrap())].iter().collect(); //TODO error checking
 
-    if fs::copy(&input_file, &tmp_location).is_err() {
-        return println!("Error, failed when attempting to copy file to temporary location.\n    Copying from: {}\n  Copying to: {}", input_file.to_str().unwrap_or(""), tmp_location.to_str().unwrap_or(""));
-    }
+    // if fs::copy(&input_file, &tmp_location).is_err() {
+    //     return println!("Error, failed when attempting to copy file to temporary location.\n    Copying from: {}\n  Copying to: {}", input_file.to_str().unwrap_or(""), tmp_location.to_str().unwrap_or(""));
+    // }
 
     //The server is running! Lets share the file.
-    let body = server_io::RequestBody::default(tmp_location.to_str().unwrap()); //Shouldn't need any error handling here?
+    let body = server_io::RequestBody::default(input_file.to_str().unwrap()); //Shouldn't need any error handling here?
     let req = send_file(&format!("{}/share", SERVER_IP_ADDRESS), body).await;
     if req.is_err() {
         return println!("Error, failed to send request to server! Did it shutdown while we were waiting?");

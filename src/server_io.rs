@@ -1,5 +1,7 @@
 use crate::errors::ServerError;
+use serde::{Serialize, Deserialize};
 
+#[derive(Serialize, Deserialize, Debug)]
 pub struct RequestBody {
     path: String,
     usr: String,
@@ -10,9 +12,8 @@ pub struct RequestBody {
 }
 
 impl RequestBody {
-    fn to_str(&self) -> &str {
-        //TODO
-        return ""
+    fn to_str(&self) -> String {
+        return serde_json::to_string(self).unwrap();
     }
 
     pub fn default(path: &str) -> RequestBody {
