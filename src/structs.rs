@@ -4,7 +4,9 @@ use rocket::outcome::Outcome::*;
 use rocket::http::{Status, ContentType};
 use rocket::request::{self, Request};
 use std::error::Error;
+use std::path::PathBuf;
 use std::fmt;
+use mac_address;
 
 #[derive(Debug)]
 pub enum ShareError {
@@ -24,6 +26,21 @@ pub struct Share {
     restrict_wget: bool,
     restrict_website: bool,
     name: String,
+    computer: String,
+}
+
+impl Share {
+    fn validate(&self) -> Result<(), ShareError> {
+        //Check that this request came from the same computer
+        //TODO
+    
+        //Check that the file does exist on the drive
+        if !PathBuf::from(&self.path).exists() {
+            return Err(ShareError::FileDoesntExist);
+        }
+        
+        Ok(())
+    }
 }
 
 #[rocket::async_trait]
@@ -53,6 +70,13 @@ impl<'r> FromData<'r> for Share {
             Ok(share) => share,
             Err(e) => return Failure((Status::BadRequest, ShareError::ParseError)),
         };
+
+        //Validate the share
+        match share.validate() {
+            Ok(_) => (),
+            Err(e) => return Failure((Status::BadRequest, e)),
+        };
+
 
         Success(share)
     }

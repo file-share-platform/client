@@ -532,6 +532,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "mac_address"
+version = "1.1.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6d9bb26482176bddeea173ceaa2acec85146d20cdcc631eafaf9d605d3d4fc23"
+dependencies = [
+ "nix",
+ "winapi",
+]
+
+[[package]]
 name = "memchr"
 version = "2.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -584,6 +594,18 @@ dependencies = [
  "tokio-util",
  "twoway",
  "version_check",
+]
+
+[[package]]
+name = "nix"
+version = "0.19.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b2ccba0cfe4fdf15982d1674c69b1fd80bad427d293849982668dfe454bd61f2"
+dependencies = [
+ "bitflags",
+ "cc",
+ "cfg-if",
+ "libc",
 ]
 
 [[package]]
@@ -924,6 +946,7 @@ name = "rust-sharing-server"
 version = "0.1.0"
 dependencies = [
  "log",
+ "mac_address",
  "pretty_env_logger",
  "rocket",
  "serde",
