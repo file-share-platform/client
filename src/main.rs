@@ -8,11 +8,17 @@
 // share: Creates a share, returns a simple plain http/text response with the url of the created link.
 // URL should look like: http://54.150.23.450/share/123d-d212-3dlk-dafe/yourFile/
 
+//Global Config
+
+// const 
+
+
 #[macro_use] extern crate rocket;
 use rocket::http::Status;
 use rocket::response::{content, status};
 use std::path::PathBuf;
-
+mod structs;
+use structs::{Share};
 
 /// Loads the page for downloading a file! Also does a simple check to see if a request is coming from curl or wget.
 /// 
@@ -51,9 +57,8 @@ fn download(id: String, fileName: String) -> &'static str {
 ///     "url": "http://:SERVER_URL/download/some-uuid-code-yuup/YourFile/"
 /// }
 /// ```
-#[get("/share")]
-fn share() -> &'static str {
-    
+#[post("/share", data="<share>")]
+fn share(share: Share) -> &'static str {
     return "hello, world!"
 }
 
