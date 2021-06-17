@@ -1,12 +1,51 @@
 use serde::{Serialize, Deserialize};
 use rocket::data::{self, Data, FromData, ToByteUnit};
 use rocket::outcome::Outcome::*;
-use rocket::http::{Status, ContentType};
+use rocket::http::{Status, ContentType, Header};
 use rocket::request::{self, Request};
+use rocket::fs::NamedFile;
 use std::error::Error;
 use std::path::PathBuf;
 use std::fmt;
-use mac_address;
+use crate::{SERVER_IP, SAVE_PATH};
+use std::time::{SystemTime, UNIX_EPOCH};
+
+
+#[derive(Responder)]
+#[response(status = 200)]
+pub struct FileDownload {
+    pub inner: NamedFile,
+    pub more: Header<'static>,
+}
+
+#[derive(Deserialize, Serialize)]
+pub struct Link {
+    file: String,
+    uuid: u128,
+}
+
+impl Default for Link {
+    fn default() -> Link {
+        Link {
+            file: String::default(),
+            uuid: u128::default(),
+        }
+    }
+}
+impl Link {
+    pub fn new(file: &str, uuid: u128) -> Link {
+        Link {
+            file: String::from(file),
+            uuid,
+        }
+    }
+    pub fn to_url(&self) -> String {
+        return format!("http://{}/download/{}/{}", SERVER_IP, self.uuid, self.file);
+    }
+    pub fn to_file(&self) -> String {
+        return format!("{}/files/{}{}.link", SAVE_PATH, self.uuid, self.file)
+    }
+}
 
 #[derive(Debug)]
 pub enum ShareError {
@@ -20,17 +59,18 @@ pub enum ShareError {
 
 #[derive(Serialize, Deserialize)]
 pub struct Share {
-    path: String,
+    pub path: String,
     usr: String,
     exp: u128,
     restrict_wget: bool,
     restrict_website: bool,
-    name: String,
+    pub name: String,
     computer: String,
+    created: Option<u128>,
 }
 
 impl Share {
-    fn validate(&self) -> Result<(), ShareError> {
+    pub fn validate(&self) -> Result<(), ShareError> {
         //Check that this request came from the same computer
         //TODO
     
@@ -38,7 +78,7 @@ impl Share {
         if !PathBuf::from(&self.path).exists() {
             return Err(ShareError::FileDoesntExist);
         }
-        
+
         Ok(())
     }
 }
@@ -66,7 +106,7 @@ impl<'r> FromData<'r> for Share {
         let string = request::local_cache!(req, string);
 
         // Attempt to parse the string with serde into our struct
-        let share: Share = match serde_json::from_str(string) {
+        let mut share: Share = match serde_json::from_str(string) {
             Ok(share) => share,
             Err(e) => return Failure((Status::BadRequest, ShareError::ParseError)),
         };
@@ -77,11 +117,13 @@ impl<'r> FromData<'r> for Share {
             Err(e) => return Failure((Status::BadRequest, e)),
         };
 
+        //Set the time we received this request on the share.
+        share.created = Some(SystemTime::now().duration_since(UNIX_EPOCH).expect("Time went backwards").as_millis() as u128);
 
         Success(share)
     }
 }
-
+ 
 impl Error for ShareError {
     fn description(&self) -> &str {
         match &*self {

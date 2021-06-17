@@ -10,15 +10,20 @@
 
 //Global Config
 
-// const 
-
+const SAVE_PATH: &str = "";
+const SERVER_IP: &str = "";
 
 #[macro_use] extern crate rocket;
-use rocket::http::Status;
 use rocket::response::{content, status};
+use rocket::http::{ContentType, Status};
 use std::path::PathBuf;
 mod structs;
-use structs::{Share};
+use structs::{Share, Link, FileDownload};
+use uuid::Uuid;
+use std::fs::File;
+use std::io::prelude::*;
+use rocket::fs::NamedFile;
+
 
 /// Loads the page for downloading a file! Also does a simple check to see if a request is coming from curl or wget.
 /// 
@@ -30,10 +35,50 @@ use structs::{Share};
 ///     WGET http://:SERVER_URL/download/some-uuid-code-yuup/YourFile/
 /// ```
 /// 
-#[get("/download/<id>/<fileName>")]
-fn download(id: String, fileName: String) -> &'static str {
-    return "hello, world!"
+#[get("/download/<id>/<file_name>")]
+async fn download(id: u128, file_name: String) -> Result<FileDownload, (Status, String)> {
+    //We need to create a link, then check if the link exists
+    let link: Link = Link::new(&file_name, id);
+
+    //Check if the file exists
+    if !PathBuf::from(link.to_file()).exists() {
+        return Err((Status::NotFound, "File not found".into()));
+    }
+
+    //Open file
+    let mut file = match File::open(PathBuf::from(link.to_file())) {
+        Ok(file) => file,
+        Err(e) => return Err((Status::InternalServerError, e.to_string()))
+    };
+    //Read file
+    let mut content: String = String::new();
+    match file.read_to_string(&mut content) {
+        Ok(_) => (),
+        Err(e) => return Err((Status::InternalServerError, e.to_string()))
+    };
+    //Parse content
+    let share: Share = match serde_json::from_str(&content) {
+        Ok(share) => share,
+        Err(e) => return Err((Status::InternalServerError, e.to_string())),
+    };
+    //Validate the share
+    match share.validate() {
+        Ok(_) => (),
+        Err(e) => return Err((Status::InternalServerError, e.to_string())),
+    };
+
+    //Read the file that was requested by the user
+    return Ok(FileDownload {
+        inner: NamedFile::open(&share.path).await.unwrap(), //NB, while this could theoretically error share.validate() does a check that the file exists so it *shouldnt*.
+        more: rocket::http::Header::new("content-disposition", format!("attachment; filename=\"{}\"", &share.name)),
+    });
+    
 }
+
+// #[get("/download/<id>/<fileName>?force")]
+// fn download_forced(id: String, fileName: String) -> Option<NamedFile> {
+
+// }
 
 
 /// Returns a url which can be used to download a file from anywhere!
@@ -58,8 +103,33 @@ fn download(id: String, fileName: String) -> &'static str {
 /// }
 /// ```
 #[post("/share", data="<share>")]
-fn share(share: Share) -> &'static str {
-    return "hello, world!"
+fn share(share: Share) -> (Status, (ContentType, String)) {
+    //Process the share into an available download
+    //Create the link file, which is the file which holds the record of the shares we are looking to store.
+    let link: Link = Link::new(&share.name, Uuid::new_v4().as_u128());
+
+    //First check the file doesn't already exist!
+    if PathBuf::from(link.to_file()).exists() {
+        return (Status::BadRequest, (ContentType::new("text", "html"), String::from("This file has already been shared!")))
+    }
+
+    //Create the file
+    let mut file = match File::create(link.to_file()) {
+        Ok(file) => file,
+        Err(e) => return (Status::InternalServerError, (ContentType::new("text", "html"), String::from("Failed to create temporary file."))),
+    };
+
+    //Write the relevant details to the file
+    let file_content = match serde_json::to_string(&share) {
+        Ok(data) => data,
+        Err(e) => return (Status::InternalServerError, (ContentType::new("text", "html"), String::from("Failed to serialize response"))),
+    };
+
+    if file.write_all(file_content.as_bytes()).is_err() {
+        return (Status::InternalServerError, (ContentType::new("text", "html"), String::from("Failed to write to link file")));
+    }
+    
+    (Status::Ok, (ContentType::new("text", "html"), link.to_url()))
 }
 
 /// Returns the status of the server, is meant to be used to check if the server is alive.
@@ -97,5 +167,5 @@ fn heartbeat() -> status::Custom<content::Json<&'static str>> {
 #[doc(hidden)]
 #[launch]
 fn rocket() -> _ {
-    rocket::build().mount("/", routes![heartbeat, share])
+    rocket::build().mount("/", routes![heartbeat, share, download])
 }
