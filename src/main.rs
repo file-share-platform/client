@@ -23,7 +23,7 @@ use uuid::Uuid;
 use std::fs::File;
 use std::io::prelude::*;
 use rocket::fs::NamedFile;
-
+use rocket_dyn_templates::Template;
 
 /// Loads the page for downloading a file! Also does a simple check to see if a request is coming from curl or wget.
 /// 
@@ -73,22 +73,24 @@ async fn download(id: u128, file_name: String, user_agent: UserAgent) -> Result<
             return Err((Status::BadRequest, "Bad Request Client".into()));
         }
         //Download File
-        return Ok(FileDownload {
-            inner: NamedFile::open(&share.path).await.unwrap(), //NB, while this could theoretically error share.validate() does a check that the file exists so it *shouldnt*.
-            content_type: ContentType::new("application", "octet-stream"),
-            more: rocket::http::Header::new("content-disposition", format!("attachment; filename=\"{}\"", &share.name)),
-        });
+        return Ok(FileDownload::Download (
+            NamedFile::open(&share.path).await.unwrap(), //NB, while this could theoretically error share.validate() does a check that the file exists so it *shouldnt*.
+            ContentType::new("application", "octet-stream"),
+            rocket::http::Header::new("content-disposition", format!("attachment; filename=\"{}\"", &share.name)),
+        ));
     } 
 
     //Otherwise, return them the page
     if share.restrict_website {
         return Err((Status::BadRequest, "Bad Request Client".into()));
     }
-    return Ok(FileDownload {
-        inner: NamedFile::open("/home/josiah/Documents/rust-sharing-server/www/static/download.html").await.unwrap(), //NB, Should never fail as this will link to templates
-        content_type: ContentType::new("text", "html"),
-        more: rocket::http::Header::new("content-disposition", "inline"),
-    });
+    return Ok(FileDownload::Page (
+        Template::render("download", share.to_string()),
+        ContentType::new("text", "html")
+    ));
+    // inner: NamedFile::open("/home/josiah/Documents/rust-sharing-server/www/static/download.html").await.unwrap(), //NB, Should never fail as this will link to templates
+    // content_type: ContentType::new("text", "html"),
+    // more: rocket::http::Header::new("content-disposition", "inline"),
 }
 
 // #[get("/download/<id>/<fileName>?force")]
@@ -184,5 +186,7 @@ fn heartbeat() -> status::Custom<content::Json<&'static str>> {
 #[doc(hidden)]
 #[launch]
 fn rocket() -> _ {
-    rocket::build().mount("/", routes![heartbeat, share, download])
+    rocket::build()
+        .mount("/", routes![heartbeat, share, download])
+        .attach(Template::fairing())
 }

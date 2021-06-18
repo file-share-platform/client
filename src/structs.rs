@@ -9,13 +9,13 @@ use std::path::PathBuf;
 use std::fmt;
 use crate::{SERVER_IP, SAVE_PATH};
 use std::time::{SystemTime, UNIX_EPOCH};
+use rocket_dyn_templates::Template;
 
 #[derive(Responder)]
 #[response(status = 200)]
-pub struct FileDownload {
-    pub inner: NamedFile,
-    pub content_type: ContentType,
-    pub more: Header<'static>,
+pub enum FileDownload {
+    Download(NamedFile, ContentType, Header<'static>),
+    Page(Template, ContentType)
 }
 
 pub struct UserAgent {
@@ -72,6 +72,9 @@ pub struct Share {
     pub name: String,
     computer: String,
     created: Option<u128>,
+    size: u128,
+    file_type: String,
+    status: Option<String>, //TODO, note that this will need to be fixed during the validation.
 }
 
 impl Share {
@@ -87,7 +90,14 @@ impl Share {
 
         //TODO Validate that restrict_wget and restrict_website aren't both set
 
+        //TODO Implement validating the file type
+
+        //TODO Implement validating the status
+
         Ok(())
+    }
+    pub fn to_string(&self) -> String {
+        serde_json::to_string(&self).unwrap() //Theoretically this shouldn't error, but TODO Add error handling here
     }
 }
 #[derive(Debug)]
@@ -139,14 +149,14 @@ impl<'r> FromData<'r> for Share {
             Err(e) => return Failure((Status::BadRequest, ShareError::ParseError)),
         };
 
+        //Set the time we received this request on the share.
+        share.created = Some(SystemTime::now().duration_since(UNIX_EPOCH).expect("Time went backwards").as_millis() as u128);
+
         //Validate the share
         match share.validate() {
             Ok(_) => (),
             Err(e) => return Failure((Status::BadRequest, e)),
         };
-
-        //Set the time we received this request on the share.
-        share.created = Some(SystemTime::now().duration_since(UNIX_EPOCH).expect("Time went backwards").as_millis() as u128);
 
         Success(share)
     }
