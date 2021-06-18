@@ -2,7 +2,7 @@ use serde::{Serialize, Deserialize};
 use rocket::data::{self, Data, FromData, ToByteUnit};
 use rocket::outcome::Outcome::*;
 use rocket::http::{Status, ContentType, Header};
-use rocket::request::{self, Request};
+use rocket::request::{self, Request, FromRequest};
 use rocket::fs::NamedFile;
 use std::error::Error;
 use std::path::PathBuf;
@@ -10,13 +10,18 @@ use std::fmt;
 use crate::{SERVER_IP, SAVE_PATH};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-
 #[derive(Responder)]
 #[response(status = 200)]
 pub struct FileDownload {
     pub inner: NamedFile,
+    pub content_type: ContentType,
     pub more: Header<'static>,
 }
+
+pub struct UserAgent {
+    pub agent: String
+}
+
 
 #[derive(Deserialize, Serialize)]
 pub struct Link {
@@ -62,8 +67,8 @@ pub struct Share {
     pub path: String,
     usr: String,
     exp: u128,
-    restrict_wget: bool,
-    restrict_website: bool,
+    pub restrict_wget: bool,
+    pub restrict_website: bool,
     pub name: String,
     computer: String,
     created: Option<u128>,
@@ -71,15 +76,38 @@ pub struct Share {
 
 impl Share {
     pub fn validate(&self) -> Result<(), ShareError> {
-        //Check that this request came from the same computer
-        //TODO
+        //TODO Check that this request came from the same computer
     
         //Check that the file does exist on the drive
         if !PathBuf::from(&self.path).exists() {
             return Err(ShareError::FileDoesntExist);
         }
 
+        //TODO Check that we haven't reached the exp of this request
+
+        //TODO Validate that restrict_wget and restrict_website aren't both set
+
         Ok(())
+    }
+}
+#[derive(Debug)]
+pub enum UserAgentError {
+    ParseError
+}
+
+#[rocket::async_trait]
+impl<'r> FromRequest<'r> for UserAgent {
+    type Error = UserAgentError;
+    async fn from_request(req: &'r Request<'_>) -> request::Outcome<Self, Self::Error> {
+        let agent_name = match req.headers().get_one("User-Agent") {
+            Some(name) => name,
+            None => return Failure((Status::BadRequest, UserAgentError::ParseError)),
+        };
+        return Success(
+            UserAgent {
+                agent: agent_name.to_owned()
+            }
+        );
     }
 }
 

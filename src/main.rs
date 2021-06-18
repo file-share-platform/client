@@ -10,15 +10,15 @@
 
 //Global Config
 
-const SAVE_PATH: &str = "";
-const SERVER_IP: &str = "";
+const SAVE_PATH: &str = "/home/josiah/MEGA/share";
+const SERVER_IP: &str = "127.0.0.1:8000";
 
 #[macro_use] extern crate rocket;
 use rocket::response::{content, status};
 use rocket::http::{ContentType, Status};
 use std::path::PathBuf;
 mod structs;
-use structs::{Share, Link, FileDownload};
+use structs::{Share, Link, FileDownload, UserAgent};
 use uuid::Uuid;
 use std::fs::File;
 use std::io::prelude::*;
@@ -36,10 +36,10 @@ use rocket::fs::NamedFile;
 /// ```
 /// 
 #[get("/download/<id>/<file_name>")]
-async fn download(id: u128, file_name: String) -> Result<FileDownload, (Status, String)> {
+async fn download(id: u128, file_name: String, user_agent: UserAgent) -> Result<FileDownload, (Status, String)> {
     //We need to create a link, then check if the link exists
     let link: Link = Link::new(&file_name, id);
-
+    println!("Some and things: {}", user_agent.agent);
     //Check if the file exists
     if !PathBuf::from(link.to_file()).exists() {
         return Err((Status::NotFound, "File not found".into()));
@@ -67,12 +67,28 @@ async fn download(id: u128, file_name: String) -> Result<FileDownload, (Status, 
         Err(e) => return Err((Status::InternalServerError, e.to_string())),
     };
 
-    //Read the file that was requested by the user
+    //Request is coming from wget or curl, and wget is enabled. Lets allow a download!
+    if user_agent.agent.to_lowercase().contains("wget") || user_agent.agent.to_lowercase().contains("curl") {
+        if share.restrict_wget {
+            return Err((Status::BadRequest, "Bad Request Client".into()));
+        }
+        //Download File
+        return Ok(FileDownload {
+            inner: NamedFile::open(&share.path).await.unwrap(), //NB, while this could theoretically error share.validate() does a check that the file exists so it *shouldnt*.
+            content_type: ContentType::new("application", "octet-stream"),
+            more: rocket::http::Header::new("content-disposition", format!("attachment; filename=\"{}\"", &share.name)),
+        });
+    } 
+
+    //Otherwise, return them the page
+    if share.restrict_website {
+        return Err((Status::BadRequest, "Bad Request Client".into()));
+    }
     return Ok(FileDownload {
-        inner: NamedFile::open(&share.path).await.unwrap(), //NB, while this could theoretically error share.validate() does a check that the file exists so it *shouldnt*.
-        more: rocket::http::Header::new("content-disposition", format!("attachment; filename=\"{}\"", &share.name)),
+        inner: NamedFile::open("/home/josiah/Documents/rust-sharing-server/www/static/download.html").await.unwrap(), //NB, Should never fail as this will link to templates
+        content_type: ContentType::new("text", "html"),
+        more: rocket::http::Header::new("content-disposition", "inline"),
     });
-    
 }
 
 // #[get("/download/<id>/<fileName>?force")]
@@ -114,15 +130,16 @@ fn share(share: Share) -> (Status, (ContentType, String)) {
     }
 
     //Create the file
+    println!("{}",link.to_file());
     let mut file = match File::create(link.to_file()) {
         Ok(file) => file,
-        Err(e) => return (Status::InternalServerError, (ContentType::new("text", "html"), String::from("Failed to create temporary file."))),
+        Err(e) => return (Status::InternalServerError, (ContentType::new("text", "html"), format!("Failed to create temporary file: {}", e.to_string()))),
     };
 
     //Write the relevant details to the file
     let file_content = match serde_json::to_string(&share) {
         Ok(data) => data,
-        Err(e) => return (Status::InternalServerError, (ContentType::new("text", "html"), String::from("Failed to serialize response"))),
+        Err(e) => return (Status::InternalServerError, (ContentType::new("text", "html"), format!("Failed to serialize response: {}", e.to_string()))),
     };
 
     if file.write_all(file_content.as_bytes()).is_err() {
