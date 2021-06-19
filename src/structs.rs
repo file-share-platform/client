@@ -60,6 +60,7 @@ pub enum ShareError {
     Io(std::io::Error),
     WrongComputer,
     ContentType,
+    TimeError,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -86,13 +87,17 @@ impl Share {
             return Err(ShareError::FileDoesntExist);
         }
 
-        //TODO Check that we haven't reached the exp of this request
+        //Check that the exp is actually after the created time stamp
+        if self.exp > self.created.unwrap() { //NB No error checking needed here.
+            return Err(ShareError::TimeError);
+        }        
 
-        //TODO Validate that restrict_wget and restrict_website aren't both set
+        // Validate that restrict_wget and restrict_website aren't both set
+        if self.restrict_wget && self.restrict_website {
+            return Err(ShareError::ParseError)
+        }
 
         //TODO Implement validating the file type
-
-        //TODO Implement validating the status
 
         Ok(())
     }
@@ -171,6 +176,7 @@ impl Error for ShareError {
             ShareError::WrongComputer => "This request was sent from a differnet computer than the one the server is hosted on",
             ShareError::ContentType => "Incorrect content type, expected application/JSON",
             ShareError::Io(_) => "Failed to read string",
+            ShareError::TimeError => "The expiry date is set before the current time!",
         }
     }
 }
@@ -184,6 +190,7 @@ impl fmt::Display for ShareError {
             ShareError::WrongComputer => f.write_str("This request was sent from a differnet computer than the one the server is hosted on"),
             ShareError::ContentType => f.write_str("Incorrect content type, expected application/JSON"),
             ShareError::Io(err) => f.write_str(&err.to_string()),
+            ShareError::TimeError => f.write_str("The expiry date is set before the current time!"),
         }
     }
 }
