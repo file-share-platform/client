@@ -38,7 +38,7 @@ const VERSION: &str = "0.0.1";
 const SIZE_LIMIT: u64 = 2147483648; //Set the file transfer limit default to 2 GB. Should be enough for most people.
 const SERVER_BINARY_LOCATION: &str = "";
 const MAX_SERVER_START_ATTEMPTS: u8 = 3;
-const SERVER_IP_ADDRESS: &str = "127.0.0.1";
+const SERVER_IP_ADDRESS: &str = "http://127.0.0.1:8000";
 
 // async fn begin_file_share<'a>(args: ArgMatches<'a>) -> () {
 
@@ -103,11 +103,6 @@ async fn main() -> () {
     }
     //Server Checks
 
-    //Check the server binary is where it should be.
-    if !path::PathBuf::from(SERVER_BINARY_LOCATION).exists() {
-        return println!("Error, can't find the binary for the server! There may have been an installation issue.");
-    }
-
     //Check if server is running, if it's not then start it up. If we fail to start the server 3 times, fail out to the user.
     let mut start_attmpts: u8 = 0;
     loop {
@@ -119,8 +114,13 @@ async fn main() -> () {
         //Check that the server is up
         if check_heartbeat(&format!("{}/heartbeat", SERVER_IP_ADDRESS)).await.is_ok() {
             println!("File server is running!");
-            break; //Server is up!
+            break; //Server is up!            
         } else {
+            //Check the server binary is where it should be.
+            if !path::PathBuf::from(SERVER_BINARY_LOCATION).exists() {
+                return println!("Error, can't find the binary for the server! There may have been an installation issue.");
+            }
+
             //Attempt to start server
             println!("The file server appears to not be started. Making attempt {} of {} to start server.", start_attmpts, MAX_SERVER_START_ATTEMPTS);
             Command::new(SERVER_BINARY_LOCATION)
