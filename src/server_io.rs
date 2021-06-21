@@ -1,14 +1,19 @@
 use crate::errors::ServerError;
+use crate::NAME;
 use serde::{Serialize, Deserialize};
+use reqwest::header::{USER_AGENT as UserAgent, CONTENT_TYPE as ContentType};
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct RequestBody {
     path: String,
     usr: String,
-    exp: u128,
+    exp: u64,
     restrict_wget: bool,
     restrict_website: bool,
     name: String,
+    size: u64,
+    file_type: String,
+    computer: String,
 }
 
 impl RequestBody {
@@ -19,12 +24,15 @@ impl RequestBody {
     pub fn default(path: &str) -> RequestBody {
         //TODO make this fill itself out with some reasonable defaults later down the line.
         return RequestBody {
-            path: path.to_owned(),
-            usr: "".to_owned(),
-            exp: std::u128::MAX,
+            path: path.into(),
+            usr: "test_usr".into(),
+            exp: std::u64::MAX,
             restrict_wget: false,
             restrict_website: false,
-            name: "File Share".to_owned(),
+            name: "File_Share".into(),
+            size: 15000,
+            file_type: "pdf".into(),
+            computer: "My Computer".into(),
         }
     }
     pub fn set_path(mut self, new_path: &str) -> RequestBody {
@@ -35,7 +43,7 @@ impl RequestBody {
         self.usr = new_usr.to_owned();
         return self;
     }
-    pub fn set_exp(mut self, new_exp: &u128) -> RequestBody {
+    pub fn set_exp(mut self, new_exp: &u64) -> RequestBody {
         self.exp = new_exp.to_owned();
         return self;
     }
@@ -66,7 +74,11 @@ pub async fn send_file(address: &str, data: RequestBody) -> Result<String, Serve
     let client = reqwest::Client::new();
     let res = client.post(address)
         .body(data.to_str().to_owned())
+        .header(UserAgent, format!("{}", NAME))
+        .header(ContentType, "application/json")
         .send()
+        .await?
+        .text()
         .await?;
-    return Ok("hello".to_owned());
+    return Ok(res);
 }
