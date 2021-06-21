@@ -37,6 +37,7 @@ impl Default for Link {
         }
     }
 }
+
 impl Link {
     pub fn new(file: &str, uuid: u128) -> Link {
         Link {
@@ -54,7 +55,7 @@ impl Link {
 
 #[derive(Debug)]
 pub enum ShareError {
-    ParseError,
+    ParseError(String),
     TooLarge,
     FileDoesntExist,
     Io(std::io::Error),
@@ -67,13 +68,13 @@ pub enum ShareError {
 pub struct Share {
     pub path: String,
     usr: String,
-    exp: u128,
+    exp: u64,
     pub restrict_wget: bool,
     pub restrict_website: bool,
     pub name: String,
     computer: String,
-    created: Option<u128>,
-    size: u128,
+    created: Option<u64>,
+    size: u64,
     file_type: String,
     status: Option<String>, //TODO, note that this will need to be fixed during the validation.
 }
@@ -88,13 +89,13 @@ impl Share {
         }
 
         //Check that the exp is actually after the created time stamp
-        if self.exp > self.created.unwrap() { //NB No error checking needed here.
+        if self.exp < self.created.unwrap() { //NB No error checking needed here.
             return Err(ShareError::TimeError);
         }        
 
         // Validate that restrict_wget and restrict_website aren't both set
         if self.restrict_wget && self.restrict_website {
-            return Err(ShareError::ParseError)
+            return Err(ShareError::ParseError("Both restrict_wget and restrict_website are set!".into()))
         }
 
         //TODO Implement validating the file type
@@ -137,8 +138,7 @@ impl<'r> FromData<'r> for Share {
             return Failure((Status::UnsupportedMediaType, ShareError::ContentType));
         }
 
-        let limit = req.limits().get("share").unwrap_or(256.bytes()); //Set the maximum size we'll unwrap
-
+        let limit = req.limits().get("share").unwrap_or(1024.bytes()); //Set the maximum size we'll unwrap
         //Read the data
         let string = match data.open(limit).into_string().await {
             Ok(string) if string.is_complete() => string.into_inner(),
@@ -151,11 +151,11 @@ impl<'r> FromData<'r> for Share {
         // Attempt to parse the string with serde into our struct
         let mut share: Share = match serde_json::from_str(string) {
             Ok(share) => share,
-            Err(e) => return Failure((Status::BadRequest, ShareError::ParseError)),
+            Err(e) => return Failure((Status::BadRequest, ShareError::ParseError(format!("Unable to parse string with serde: {}", e.to_string())))),
         };
 
         //Set the time we received this request on the share.
-        share.created = Some(SystemTime::now().duration_since(UNIX_EPOCH).expect("Time went backwards").as_millis() as u128);
+        share.created = Some(SystemTime::now().duration_since(UNIX_EPOCH).expect("Time went backwards").as_millis() as u64);
 
         //Validate the share
         match share.validate() {
@@ -170,7 +170,7 @@ impl<'r> FromData<'r> for Share {
 impl Error for ShareError {
     fn description(&self) -> &str {
         match &*self {
-            ShareError::ParseError => "Error parsing the share into a struct from JSON. Is the format correct? Did you include all fields?",
+            ShareError::ParseError(err) => &err,
             ShareError::TooLarge => "The share was too large",
             ShareError::FileDoesntExist => "The file this share referenced doesn't exist",
             ShareError::WrongComputer => "This request was sent from a differnet computer than the one the server is hosted on",
@@ -184,7 +184,7 @@ impl Error for ShareError {
 impl fmt::Display for ShareError {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match &*self {
-            ShareError::ParseError => f.write_str("Unable to contact server."),
+            ShareError::ParseError(err) => f.write_str(&err),
             ShareError::TooLarge => f.write_str("The share was too large"),
             ShareError::FileDoesntExist => f.write_str("The file this share referenced doesn't exist"),
             ShareError::WrongComputer => f.write_str("This request was sent from a differnet computer than the one the server is hosted on"),

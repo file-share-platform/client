@@ -35,11 +35,10 @@ use rocket_dyn_templates::Template;
 ///     WGET http://:SERVER_URL/download/some-uuid-code-yuup/YourFile/
 /// ```
 /// 
-#[get("/download/<id>/<file_name>")]
-async fn download(id: u128, file_name: String, user_agent: UserAgent) -> Result<FileDownload, (Status, String)> {
+#[get("/download/<id>/<file_name>?<force>")]
+async fn download(id: u128, file_name: String, user_agent: UserAgent, force: Option<String>) -> Result<FileDownload, (Status, String)> {
     //We need to create a link, then check if the link exists
     let link: Link = Link::new(&file_name, id);
-    println!("Some and things: {}", user_agent.agent);
     //Check if the file exists
     if !PathBuf::from(link.to_file()).exists() {
         return Err((Status::NotFound, "File not found".into()));
@@ -68,8 +67,8 @@ async fn download(id: u128, file_name: String, user_agent: UserAgent) -> Result<
     };
 
     //Request is coming from wget or curl, and wget is enabled. Lets allow a download!
-    if user_agent.agent.to_lowercase().contains("wget") || user_agent.agent.to_lowercase().contains("curl") {
-        if share.restrict_wget {
+    if user_agent.agent.to_lowercase().contains("wget") || user_agent.agent.to_lowercase().contains("curl") || force.is_some() {
+        if share.restrict_wget && force.is_none() {
             return Err((Status::BadRequest, "Bad Request Client".into()));
         }
         //Download File
@@ -85,18 +84,10 @@ async fn download(id: u128, file_name: String, user_agent: UserAgent) -> Result<
         return Err((Status::BadRequest, "Bad Request Client".into()));
     }
     return Ok(FileDownload::Page (
-        Template::render("download", share.to_string()),
+        Template::render("download", &share),
         ContentType::new("text", "html")
     ));
-    // inner: NamedFile::open("/home/josiah/Documents/rust-sharing-server/www/static/download.html").await.unwrap(), //NB, Should never fail as this will link to templates
-    // content_type: ContentType::new("text", "html"),
-    // more: rocket::http::Header::new("content-disposition", "inline"),
 }
-
-// #[get("/download/<id>/<fileName>?force")]
-// fn download_forced(id: String, fileName: String) -> Option<NamedFile> {
-
-// }
 
 
 /// Returns a url which can be used to download a file from anywhere!
@@ -148,7 +139,7 @@ fn share(share: Share) -> (Status, (ContentType, String)) {
         return (Status::InternalServerError, (ContentType::new("text", "html"), String::from("Failed to write to link file")));
     }
     
-    (Status::Ok, (ContentType::new("text", "html"), link.to_url()))
+    (Status::Ok, (ContentType::new("text", "plain"), link.to_url()))
 }
 
 /// Returns the status of the server, is meant to be used to check if the server is alive.
