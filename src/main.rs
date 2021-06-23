@@ -1,37 +1,34 @@
-#![allow(dead_code)]
 //Author Josiah Bull, Copyright 2021
+//! Fast and easy file sharing over the internet, through a simple cli.
+//!
+//! Provides a simple cli to share files over the internet.
+//! 
+//! Expected Syntax: `share ./myfiles/data/file.txt`
+//! 
+//! Supported Options:
+//! - `--remove :file_id`, removes a given file share.
+//! - `--list`, lists all currently shared files
+//! - `--time`, sets the amount of time (in hours) that the file should remain shared. Default is 48 hours.
+//! - `--restrict-wget`, disables users downloading the file with wget, will force them to use web interface.
+//! - `--restrict-website`, users will only be able to collect the file using curl or wget.
+//! - `--help`, displays this interface
+//! - `--remove-all`, removes all shares.
 
 //TODO check that xorg-dev is installed! It's needed for clipboard interaction on linux.
 
-//This is a small cli applet
-//Supported commands:
-//share :file, puts a link to the file in the clipboard where it can be pasted to share.
-//  --remove :file_id, removes a given file share.
-//  --list, lists all currently shared files
-//  --time, sets the amount of time (in hours) that the file should remain shared. Default is 2 hours.
-//  --restrict-wget, disables users downloading the file with wget, will force them to use web interface.
-//  --restrict-website, users will only be able to collect the file using curl or wget.
-//  --help, displays this interface
-//  --remove-all, removes all shares.
+mod errors;
+mod server_io;
+mod hash;
 
 use std::env;
-use std::fs;
 use std::path;
 use std::process::Command;
-use std::time::{SystemTime, UNIX_EPOCH};
-use clap::{Arg, App, ArgMatches};
-use tokio::time;
-use reqwest;
-mod errors;
-use errors::ServerError;
-mod server_io;
+use clap::{Arg, App};
 use server_io::{send_file, check_heartbeat};
-mod hash;
 
 extern crate clipboard;
 
 use clipboard::ClipboardProvider;
-use clipboard::ClipboardContext;
 
 
 const NAME: &str = "fileshare";
@@ -42,9 +39,7 @@ const MAX_SERVER_START_ATTEMPTS: u8 = 3;
 const SERVER_IP_ADDRESS: &str = "http://127.0.0.1:8000";
 const DEFAULT_SHARE_TIME_HOURS: u128 = 48;
 
-// async fn begin_file_share<'a>(args: ArgMatches<'a>) -> () {
-
-// }
+/// Entry Point
 #[tokio::main]
 async fn main() -> () {
     let args = App::new(NAME)

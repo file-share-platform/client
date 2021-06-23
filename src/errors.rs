@@ -1,12 +1,15 @@
 //Author Josiah Bull, Copyright 2021
-//This module contains all of the error types and code for the project.
-//It includes some implementations to and from standard error types where needed.
+//!This module contains all of the error types and code for the project.
+//! 
+//!It includes some implementations to and from standard error types where needed.
 
 use std::error::Error;
 use std::fmt;
 
+///Represents errors that can occur when attempting to communicate with the file server.
 #[derive(Debug)]
 pub enum ServerError {
+    ///404 Error, server wasn't able to be contacted.
     NotFoundError,
 }
 
@@ -28,15 +31,20 @@ impl fmt::Display for ServerError {
 }
 
 impl From<reqwest::Error> for ServerError {
-    fn from(error: reqwest::Error) -> Self {
+    //TODO Improve this implementation to provide more information to the end user.
+    fn from(_error: reqwest::Error) -> Self {
         ServerError::NotFoundError
     }
 }
 
+///Represents the errors that can occur when attempting generating the request body client-side.
 #[derive(Debug)]
 pub enum RequestError {
+    ///An error occured trying to parse the file extension.
     FileExtensionError,
+    ///An error occured trying to parse the file name.
     FileNameError,
+    ///An error occured when trying to collect the file size, likely an IoError.
     FileSizeError(String),
 }
 
