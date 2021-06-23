@@ -139,7 +139,11 @@ async fn main() -> () {
     // }
 
     //The server is running! Lets share the file.
-    let body = server_io::RequestBody::default(input_file.to_str().unwrap()); //Shouldn't need any error handling here?
+    let body: server_io::RequestBody = match server_io::RequestBody::new(input_file.to_str().unwrap()) {
+        Ok(file) => file,
+        Err(e) => return println!("An error occured: {}", e.to_string()),
+    };
+
     let req = send_file(&format!("{}/share", SERVER_IP_ADDRESS), body).await;
     if req.is_err() {
         return println!("Error, failed to send request to server! Did it shutdown while we were waiting?");

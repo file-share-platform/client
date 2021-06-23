@@ -28,3 +28,16 @@ impl From<reqwest::Error> for ServerError {
         ServerError::NotFoundError
     }
 }
+
+#[derive(Debug)]
+pub enum RequestError {
+    FileExtensionError
+}
+
+impl fmt::Display for RequestError {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match *self {
+            RequestError::FileExtensionError => f.write_str("Problem parsing file extension."),
+        }
+    }
+}

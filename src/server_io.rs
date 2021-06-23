@@ -1,7 +1,12 @@
 use crate::errors::ServerError;
 use crate::NAME;
 use serde::{Serialize, Deserialize};
+use std::collections::hash_map::DefaultHasher;
 use reqwest::header::{USER_AGENT as UserAgent, CONTENT_TYPE as ContentType};
+use std::ffi::OsStr;
+use std::path::Path;
+use crate::errors::RequestError;
+use whoami;
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct RequestBody {
@@ -13,7 +18,7 @@ pub struct RequestBody {
     name: String,
     size: u64,
     file_type: String,
-    computer: String,
+    computer: u64,
 }
 
 impl RequestBody {
@@ -21,9 +26,15 @@ impl RequestBody {
         return serde_json::to_string(self).unwrap();
     }
 
-    pub fn default(path: &str) -> RequestBody {
+    pub fn new(path: &str) -> Result<RequestBody, RequestError> {
         //TODO make this fill itself out with some reasonable defaults later down the line.
-        return RequestBody {
+        //Create the file extension. TODO: Validate for empty extensions? Is that even going to be a problem?
+        let file_type: String = match Path::new(path).extension().and_then(OsStr::to_str) {
+            Some(file) => file.to_owned(),
+            None => return Err(RequestError::FileExtensionError),
+        };
+
+        return Ok( RequestBody {
             path: path.into(),
             usr: "test_usr".into(),
             exp: std::u64::MAX,
@@ -31,9 +42,9 @@ impl RequestBody {
             restrict_website: false,
             name: "File_Share".into(),
             size: 15000,
-            file_type: "pdf".into(),
-            computer: "My Computer".into(),
-        }
+            file_type: file_type,
+            computer: 12312, //A hash which relates to some basic info about this computer
+        });
     }
     pub fn set_path(mut self, new_path: &str) -> RequestBody {
         self.path = new_path.to_owned();
