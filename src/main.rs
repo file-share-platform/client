@@ -1,5 +1,5 @@
 #![allow(dead_code)]
-//Author: Josiah Bull
+//Author Josiah Bull, Copyright 2021
 
 //TODO check that xorg-dev is installed! It's needed for clipboard interaction on linux.
 
@@ -26,6 +26,7 @@ mod errors;
 use errors::ServerError;
 mod server_io;
 use server_io::{send_file, check_heartbeat};
+mod hash;
 
 extern crate clipboard;
 
@@ -39,6 +40,7 @@ const SIZE_LIMIT: u64 = 2147483648; //Set the file transfer limit default to 2 G
 const SERVER_BINARY_LOCATION: &str = "";
 const MAX_SERVER_START_ATTEMPTS: u8 = 3;
 const SERVER_IP_ADDRESS: &str = "http://127.0.0.1:8000";
+const DEFAULT_SHARE_TIME_HOURS: u128 = 48;
 
 // async fn begin_file_share<'a>(args: ArgMatches<'a>) -> () {
 
