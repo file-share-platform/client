@@ -79,7 +79,7 @@ impl RequestBody {
         self.restrict_wget = new_wget.to_owned();
         return self;
     }
-    //Takes a `&bool` representing whether or not this share can be accessed by the website, and returns a `RequestBody`. Has no validation, so it is recommended to validate your `&bool` beforehand (e.g. ensure that you're not also setting `restrict_wget`!). Can be chained with other `set_???` functions.
+    ///Takes a `&bool` representing whether or not this share can be accessed by the website, and returns a `RequestBody`. Has no validation, so it is recommended to validate your `&bool` beforehand (e.g. ensure that you're not also setting `restrict_wget`!). Can be chained with other `set_???` functions.
     pub fn set_restrict_website(mut self, new_website: &bool) -> RequestBody {
         self.restrict_website = new_website.to_owned();
         return self;
@@ -89,9 +89,24 @@ impl RequestBody {
         self.name = new_name.to_owned();
         return self;
     }
-    ///Used to validate all values in the struct. Will test the paths, check exp dates are valid, and do a whole bunch of other checks which may cause problems when we attempt to send this file to the server.
+    ///Used to validate all values in the struct. Will test the paths, check exp dates are valid, and do a whole bunch of other checks to prevent problems when we attempt to send this file to the server.
     pub fn validate(&self) -> Result<(), RequestError> {
-        //TODO Implement validation
+        let path = Path::new(&self.path);
+        if !path.exists() {
+            return Err(RequestError::FileExistError("File doesn't exist!".into()));
+        }
+        if path.is_dir() {
+            return Err(RequestError::FileExistError("Provided path is a directory, not a file!".into()))
+        }
+    
+        if self.restrict_website && self.restrict_wget {
+            return Err(RequestError::RestrictionError);
+        }
+
+        if self.exp < (SystemTime::now().duration_since(UNIX_EPOCH).expect("Time went backwards").as_millis() + DEFAULT_SHARE_TIME_HOURS * 60 * 60 * 1000) as u64 {
+            return Err(RequestError::TimeError)
+        }
+
         Ok(())
     }
 }

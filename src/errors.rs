@@ -46,6 +46,12 @@ pub enum RequestError {
     FileNameError,
     ///An error occured when trying to collect the file size, likely an IoError.
     FileSizeError(String),
+    ///File Doesn't Exist
+    FileExistError(String),
+    ///Both restrict_wget and restrict_website have been set
+    RestrictionError,
+    ///Expiry is set to before the current time. 
+    TimeError
 }
 
 impl fmt::Display for RequestError {
@@ -53,13 +59,16 @@ impl fmt::Display for RequestError {
         match &*self {
             RequestError::FileExtensionError => f.write_str("Failed to parse file extension."),
             RequestError::FileNameError => f.write_str("Failed to parse file name."),
-            RequestError::FileSizeError(text) => f.write_str(&text)
+            RequestError::FileSizeError(text) => f.write_str(&text),
+            RequestError::FileExistError(text) => f.write_str(&text),
+            RequestError::RestrictionError => f.write_str("Cannot set both restrict_wget and restrict_website at the same time!"),
+            RequestError::TimeError => f.write_str("Expiry time set in the past."),
         }
     }
 }
 
-impl From<std::io::Error> for RequestError {
-    fn from(error: std::io::Error) -> Self {
-        RequestError::FileSizeError(format!("Failed to parse file size: {}", error.to_string()))
+impl<'r> From<std::io::Error> for RequestError { 
+    fn from(error: std::io::Error) -> RequestError {
+        RequestError::FileSizeError(error.to_string())
     }
 }
