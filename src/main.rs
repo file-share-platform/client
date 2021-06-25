@@ -41,7 +41,7 @@ const DEFAULT_SHARE_TIME_HOURS: u128 = 48;
 
 /// Entry Point
 #[tokio::main]
-async fn main() -> () {
+async fn main() {
     let args = App::new(NAME)
         .version(VERSION)
         .author("Josiah Bull <Josiah.Bull7@gmail.com>")
@@ -83,7 +83,15 @@ async fn main() -> () {
             .help("disables boundary checks set in the config file. (NOT SUPPORTED)"))
         .get_matches();
 
-    let input_file: path::PathBuf = [env::current_dir().unwrap().to_str().unwrap(), args.value_of("FILE").unwrap()].iter().collect(); //TODO add some error checking here.
+    let input_file: path::PathBuf = [
+        env::current_dir()
+            .expect("Failed to get current directory of program.")
+            .to_str()
+            .expect("Failed string conversion!"), 
+        args.value_of("FILE")
+            .unwrap()]
+    .iter()
+    .collect();
 
     //We have recieved the given file for sharing by the user
     //Check file exists
