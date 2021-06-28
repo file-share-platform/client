@@ -2,7 +2,7 @@
 
 //!Handles communication with the file server.
 use crate::errors::ServerError;
-use crate::{NAME, DEFAULT_SHARE_TIME_HOURS};
+use crate::{NAME, DEFAULT_SHARE_TIME_HOURS, SIZE_LIMIT};
 use serde::{Serialize, Deserialize};
 use reqwest::header::{USER_AGENT as UserAgent, CONTENT_TYPE as ContentType};
 use std::ffi::OsStr;
@@ -30,24 +30,33 @@ impl RequestBody {
         serde_json::to_string(self).unwrap() //TODO Error handling!
     }
     ///Returns a result which contains `RequestBody` if successful, otherwise retursn a `RequestError`. Populates all values with reasonable defaults derived from the provided path.
-    pub fn new(path: &str) -> Result<RequestBody, RequestError> {
+    pub fn new(path_raw: &str) -> Result<RequestBody, RequestError> {
+        //Check file exists
+        let path = Path::new(path_raw);
+        if !path.exists() {
+            return Err(RequestError::FileExistError("File doesn't exist!".into()));
+        }
+        
         //Create the file extension. 
-        let file_type: String = match Path::new(path).extension().and_then(OsStr::to_str) {
+        let file_type: String = match path.extension().and_then(OsStr::to_str) {
             Some(file) => file.to_owned(),
             None => return Err(RequestError::FileExtensionError),
         };
 
         //Extract filename
-        let name: String = match Path::new(path).file_name().and_then(OsStr::to_str) {
+        let name: String = match path.file_stem().and_then(OsStr::to_str) {
             Some(name) => name.to_owned(),
             None => return Err(RequestError::FileNameError)
         };
         
         //Collect size of file
-        let size: u64 = PathBuf::from(path).metadata()?.len();  
+        let size: u64 = PathBuf::from(path).metadata()?.len();
+        if size > SIZE_LIMIT {
+            return Err(RequestError::FileSizeError("Too Large!".into()));
+        } 
 
         Ok(RequestBody {
-            path: path.into(),
+            path: path_raw.into(),
             usr: whoami::realname(),
             exp: (SystemTime::now().duration_since(UNIX_EPOCH).expect("Time went backwards").as_millis() + DEFAULT_SHARE_TIME_HOURS * 60 * 60 * 1000) as u64,
             restrict_wget: false,
@@ -128,4 +137,150 @@ pub async fn send_file(address: &str, data: RequestBody) -> Result<String, Serve
         .text()
         .await?;
     Ok(res)
+}
+
+#[doc(hidden)]
+mod server_io_tests {
+    use crate::server_io::*;
+    use crate::errors::*;
+    use crate::{SERVER_IP_ADDRESS};
+    use std::fs::File;
+    use std::fs::remove_file;
+    use std::io::prelude::*;
+
+    struct TestFile {
+        path: String
+    }
+
+    //Helper Functions
+    fn create_test_file(name: &str) -> TestFile {
+        let path = format!("test_files/{}", name);
+        let mut file = File::create(&path).expect("Failed to create file.");
+        file.write_all(b"This is a test file, it should be deleted.").expect("Failed to write to file");
+        TestFile {
+            path
+        }
+    }
+    
+    impl TestFile {
+        fn cleanup(self) {
+            std::fs::remove_file(self.path).expect("Failed to remove file! Please manually clean up!");
+        }
+    }
+
+    
+    #[tokio::test]
+    async fn test_heartbeat_success() {
+        let output = check_heartbeat("https://www.google.com/").await;
+        assert_eq!(output.unwrap(), ());
+    }
+
+    
+    #[tokio::test]
+    async fn test_heartbeat_failure() {
+        let output = check_heartbeat("http://ThisAddressWillNeverExist-afelakjedflakej/Things.com").await;
+
+        match output {
+            Ok(_) => panic!("This should not produce an ok value!"),
+            Err(e) => {
+                match e {
+                    ServerError::NotFoundError => (),
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn test_request_body_success() {
+        let file = create_test_file("foo.pdf");
+
+        let req_body: RequestBody = RequestBody::new(&file.path).expect("Failed to create request body!");
+
+        assert_eq!(req_body.restrict_wget, false);
+        assert_eq!(req_body.restrict_website, false);
+        assert!(req_body.computer > 10); //We can only really check that it has some hash, the actual hash is time-dependant.
+        assert_eq!(req_body.file_type, "pdf");
+        assert_eq!(req_body.name, "foo");
+        assert_eq!(&req_body.path, &file.path);
+
+        file.cleanup();
+    }
+
+    //Test modifiers for RequestBody
+    #[test]
+    fn test_request_body_modifiers() {
+        let file = create_test_file("foo.txt");
+
+        let mut req_body: RequestBody = RequestBody::new(&file.path).expect("Failed to create request body!");
+        
+        //Let set a whole bunch of values and check that they appear on the output!
+        req_body = req_body
+            .set_exp(&1234)
+            .set_name("Jane Doe")
+            .set_path("bar.txt")
+            .set_restrict_website(&true)
+            .set_restrict_wget(&false);
+        
+        assert_eq!(req_body.restrict_website, true);
+        assert_eq!(req_body.restrict_wget, false);
+        assert_eq!(req_body.exp, 1234);
+        assert_eq!(req_body.name, "Jane Doe");
+        assert_eq!(req_body.path, "bar.txt");
+
+        file.cleanup();
+    }
+
+    #[test]
+    fn test_request_body_extension_error() {
+        let file = create_test_file("foo");
+
+        match RequestBody::new(&file.path).expect_err("This should have errored!") {
+            RequestError::FileExtensionError => (),
+            e => panic!("Expected error type of FileExtensionError. Got : {}", e)
+        }
+
+        file.cleanup();
+    }
+
+    #[test]
+    fn test_request_body_file_exist_error() {
+        match RequestBody::new("berries.txt").expect_err("This should have errored!") {
+            RequestError::FileExistError(_) => (),
+            e => panic!("Expected error type of FileExistError. Got : {}", e)
+        }
+    }
+
+    #[test]
+    fn test_request_body_file_size() {
+        //Not implemented
+    }
+
+    #[test]
+    fn test_request_body() {
+        let file = create_test_file("foo.mp4");
+
+        let mut req_body: RequestBody = RequestBody::new(&file.path).expect("Failed to create request body!");
+        req_body = req_body
+            .set_restrict_wget(&true)
+            .set_restrict_website(&true);
+
+        match req_body.validate().expect_err("This should be an error!") {
+            RequestError::RestrictionError => (),
+            e => panic!("Expected error type of RestrictionError. Got : {}", e)
+        }
+
+        file.cleanup();
+    }
+
+    #[test]
+    fn test_validation_default() {
+        let file = create_test_file("foo.mp3");
+
+        let req_body: RequestBody = RequestBody::new(&file.path).expect("Failed to create request body!");
+
+        req_body.validate().expect("Validation failed on the default body!");
+
+        file.cleanup();
+    }
+
 }
