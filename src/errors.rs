@@ -11,21 +11,26 @@ use std::fmt;
 pub enum ServerError {
     ///404 Error, server wasn't able to be contacted.
     NotFoundError,
+    ///Failed to parse the struct to json representation using serde_json.
+    ParseError(String),
 }
 
 impl Error for ServerError {
     fn description(&self) -> &str {
-        match *self {
+        match &*self {
             ServerError::NotFoundError => 
                 "Unable to contact server.",
+            ServerError::ParseError(text) =>
+                &text,
         }
     }
 }
 
 impl fmt::Display for ServerError {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        match *self {
+        match &*self {
             ServerError::NotFoundError => f.write_str("Unable to contact server."),
+            ServerError::ParseError(text) => f.write_str(&text)
         }
     }
 }
@@ -34,6 +39,12 @@ impl From<reqwest::Error> for ServerError {
     //TODO Improve this implementation to provide more information to the end user.
     fn from(_error: reqwest::Error) -> Self {
         ServerError::NotFoundError
+    }
+}
+
+impl From<serde_json::Error> for ServerError {
+    fn from(error: serde_json::Error) -> ServerError {
+        ServerError::ParseError(error.to_string())
     }
 }
 
@@ -51,7 +62,7 @@ pub enum RequestError {
     ///Both restrict_wget and restrict_website have been set
     RestrictionError,
     ///Expiry is set to before the current time. 
-    TimeError
+    TimeError,
 }
 
 impl fmt::Display for RequestError {

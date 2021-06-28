@@ -26,8 +26,8 @@ pub struct RequestBody {
 }
 #[allow(dead_code)]
 impl RequestBody {
-    fn to_json_string(&self) -> String {
-        serde_json::to_string(self).unwrap() //TODO Error handling!
+    fn to_json_string(&self) -> Result<String, serde_json::Error> {
+        serde_json::to_string(self)
     }
     ///Returns a result which contains `RequestBody` if successful, otherwise retursn a `RequestError`. Populates all values with reasonable defaults derived from the provided path.
     pub fn new(path_raw: &str) -> Result<RequestBody, RequestError> {
@@ -134,7 +134,7 @@ pub async fn check_heartbeat(address: &str) -> Result<(), ServerError> {
 pub async fn send_file(address: &str, data: RequestBody) -> Result<String, ServerError> {
     let client = reqwest::Client::new();
     let res = client.post(address)
-        .body(data.to_json_string())
+        .body(data.to_json_string()?)
         .header(UserAgent, NAME)
         .header(ContentType, "application/json")
         .send()
@@ -189,6 +189,7 @@ mod server_io_tests {
             Err(e) => {
                 match e {
                     ServerError::NotFoundError => (),
+                    e => panic!("Expected error type of NotFoundError. Got : {}", e)
                 }
             }
         }
