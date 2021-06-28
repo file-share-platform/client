@@ -283,4 +283,36 @@ mod server_io_tests {
         file.cleanup();
     }
 
+    #[test]
+    fn test_validation() {
+        let file = create_test_file("foo.mp2");
+
+        let mut req_body: RequestBody = RequestBody::new(&file.path).expect("Failed to create request body!");
+        
+        req_body = req_body.set_exp(&1234);
+        match req_body.validate().expect_err("This should be an error!") {
+            RequestError::TimeError => (),
+            e => panic!("Expected error type of TimeError. Got : {}", e)
+        }
+
+        req_body = req_body
+            .set_exp(&std::u64::MAX)
+            .set_path("doesnt_exist.txt");
+        match req_body.validate().expect_err("This should be an error!") {
+            RequestError::FileExistError(_) => (),
+            e => panic!("Expected error type of FileExistError. Got : {}", e)
+        }
+
+        req_body = req_body
+            .set_path(&file.path)
+            .set_restrict_website(&true)
+            .set_restrict_wget(&true);
+        match req_body.validate().expect_err("This should be an error!") {
+            RequestError::RestrictionError => (),
+            e => panic!("Expected error type of RestrictionError. Got : {}", e)
+        }
+
+        file.cleanup();
+    }
+
 }
