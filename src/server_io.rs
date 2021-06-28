@@ -97,6 +97,11 @@ impl RequestBody {
         self.name = new_name.to_owned();
         self
     }
+    ///Takes a `&u64` representing a file size override, and returns a `RequestBody`. Has no validation, so it is recommended to validate your `&u64` beforehand. Can be chained with other `set_???` functions.
+    pub fn set_size(mut self, new_size: &u64) -> RequestBody {
+        self.size = new_size.to_owned();
+        self
+    }
     ///Used to validate all values in the struct. Will test the paths, check exp dates are valid, and do a whole bunch of other checks to prevent problems when we attempt to send this file to the server.
     pub fn validate(&self) -> Result<(), RequestError> {
         let path = Path::new(&self.path);
@@ -139,30 +144,29 @@ pub async fn send_file(address: &str, data: RequestBody) -> Result<String, Serve
     Ok(res)
 }
 
+#[cfg(test)]
 #[doc(hidden)]
 mod server_io_tests {
     use crate::server_io::*;
     use crate::errors::*;
-    use crate::{SERVER_IP_ADDRESS};
     use std::fs::File;
-    use std::fs::remove_file;
     use std::io::prelude::*;
 
     struct TestFile {
         path: String
     }
-
-    //Helper Functions
-    fn create_test_file(name: &str) -> TestFile {
-        let path = format!("test_files/{}", name);
-        let mut file = File::create(&path).expect("Failed to create file.");
-        file.write_all(b"This is a test file, it should be deleted.").expect("Failed to write to file");
-        TestFile {
-            path
-        }
-    }
     
+
     impl TestFile {
+        fn new(name: &str) -> Self {
+            let path = format!("test_files/{}", name);
+            let mut file = File::create(&path).expect("Failed to create file.");
+            file.write_all(b"This is a test file, it should be deleted.").expect("Failed to write to file");
+            TestFile {
+                path
+            }
+        }
+
         fn cleanup(self) {
             std::fs::remove_file(self.path).expect("Failed to remove file! Please manually clean up!");
         }
@@ -192,7 +196,7 @@ mod server_io_tests {
 
     #[test]
     fn test_request_body_success() {
-        let file = create_test_file("foo.pdf");
+        let file: TestFile = TestFile::new("foo.pdf");
 
         let req_body: RequestBody = RequestBody::new(&file.path).expect("Failed to create request body!");
 
@@ -209,7 +213,7 @@ mod server_io_tests {
     //Test modifiers for RequestBody
     #[test]
     fn test_request_body_modifiers() {
-        let file = create_test_file("foo.txt");
+        let file = TestFile::new("foo.txt");
 
         let mut req_body: RequestBody = RequestBody::new(&file.path).expect("Failed to create request body!");
         
@@ -232,7 +236,7 @@ mod server_io_tests {
 
     #[test]
     fn test_request_body_extension_error() {
-        let file = create_test_file("foo");
+        let file = TestFile::new("foo");
 
         match RequestBody::new(&file.path).expect_err("This should have errored!") {
             RequestError::FileExtensionError => (),
@@ -257,7 +261,7 @@ mod server_io_tests {
 
     #[test]
     fn test_request_body() {
-        let file = create_test_file("foo.mp4");
+        let file = TestFile::new("foo.mp4");
 
         let mut req_body: RequestBody = RequestBody::new(&file.path).expect("Failed to create request body!");
         req_body = req_body
@@ -274,7 +278,7 @@ mod server_io_tests {
 
     #[test]
     fn test_validation_default() {
-        let file = create_test_file("foo.mp3");
+        let file = TestFile::new("foo.mp3");
 
         let req_body: RequestBody = RequestBody::new(&file.path).expect("Failed to create request body!");
 
@@ -285,7 +289,7 @@ mod server_io_tests {
 
     #[test]
     fn test_validation() {
-        let file = create_test_file("foo.mp2");
+        let file = TestFile::new("foo.mp2");
 
         let mut req_body: RequestBody = RequestBody::new(&file.path).expect("Failed to create request body!");
         
