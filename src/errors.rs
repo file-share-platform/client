@@ -11,6 +11,8 @@ use std::fmt;
 pub enum ServerError {
     ///404 Error, server wasn't able to be contacted.
     NotFoundError,
+    ///The request was rejected by the server for some reason!
+    RequestError(String),
     ///Failed to parse the struct to json representation using serde_json.
     ParseError(String),
 }
@@ -22,6 +24,8 @@ impl Error for ServerError {
                 "Unable to contact server.",
             ServerError::ParseError(text) =>
                 &text,
+            ServerError::RequestError(text) => 
+                &text,
         }
     }
 }
@@ -30,14 +34,23 @@ impl fmt::Display for ServerError {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match &*self {
             ServerError::NotFoundError => f.write_str("Unable to contact server."),
-            ServerError::ParseError(text) => f.write_str(&text)
+            ServerError::ParseError(text) => f.write_str(&text),
+            ServerError::RequestError(text) => f.write_str(&text),
         }
     }
 }
 
 impl From<reqwest::Error> for ServerError {
-    //TODO Improve this implementation to provide more information to the end user.
-    fn from(_error: reqwest::Error) -> Self {
+    fn from(error: reqwest::Error) -> Self {
+        if let Some(code) = error.status() {
+            if code == 404 {
+                return ServerError::NotFoundError;
+            }
+            if code == 400 {
+                return ServerError::RequestError(error.to_string());
+            }
+        }
+
         ServerError::NotFoundError
     }
 }

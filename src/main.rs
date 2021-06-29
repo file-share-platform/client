@@ -148,7 +148,7 @@ async fn main() {
 
     let req = send_file(&format!("{}/share", SERVER_IP_ADDRESS), body).await;
     if req.is_err() {
-        return println!("Error, failed to send request to server! Did it shutdown while we were waiting?");
+        return println!("Error, failed to send request to server! Error: {}", req.unwrap_err());
     }
 
     let response = req.unwrap();
