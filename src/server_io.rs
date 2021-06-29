@@ -9,7 +9,7 @@ use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
 use crate::errors::RequestError;
 use crate::hash::ComputerIdentifier;
-use std::time::{SystemTime, UNIX_EPOCH};
+use crate::common::*;
 
 ///Represents the data required to send a share request to the file server.
 #[derive(Serialize, Deserialize, Debug)]
@@ -37,6 +37,10 @@ impl RequestBody {
             return Err(RequestError::FileExistError("File doesn't exist!".into()));
         }
         
+        if path.is_dir() {
+            return Err(RequestError::FileExistError("File is a directory!".into()))
+        }
+
         //Create the file extension. 
         let file_type: String = match path.extension().and_then(OsStr::to_str) {
             Some(file) => file.to_owned(),
@@ -58,7 +62,7 @@ impl RequestBody {
         Ok(RequestBody {
             path: path_raw.into(),
             usr: whoami::realname(),
-            exp: (SystemTime::now().duration_since(UNIX_EPOCH).expect("Time went backwards").as_millis() + DEFAULT_SHARE_TIME_HOURS * 60 * 60 * 1000) as u64,
+            exp: get_time() + (DEFAULT_SHARE_TIME_HOURS * 60 * 60 * 1000) as u64,
             restrict_wget: false,
             restrict_website: false,
             name,
@@ -82,13 +86,13 @@ impl RequestBody {
         self.exp = new_exp.to_owned();
         self
     }
-    ///Takes a `&bool` representing whether or not this share can be accessed by wget, and returns a `RequestBody`. Has no validation, so it is recommended to validate your `&bool` beforehand (e.g. ensure that you're not also setting `restrict_website`!). Can be chained with other `set_???` functions.
-    pub fn set_restrict_wget(mut self, new_wget: &bool) -> RequestBody {
+    ///Takes a `bool` representing whether or not this share can be accessed by wget, and returns a `RequestBody`. Has no validation, so it is recommended to validate your `&bool` beforehand (e.g. ensure that you're not also setting `restrict_website`!). Can be chained with other `set_???` functions.
+    pub fn set_restrict_wget(mut self, new_wget: bool) -> RequestBody {
         self.restrict_wget = new_wget.to_owned();
         self
     }
-    ///Takes a `&bool` representing whether or not this share can be accessed by the website, and returns a `RequestBody`. Has no validation, so it is recommended to validate your `&bool` beforehand (e.g. ensure that you're not also setting `restrict_wget`!). Can be chained with other `set_???` functions.
-    pub fn set_restrict_website(mut self, new_website: &bool) -> RequestBody {
+    ///Takes a `bool` representing whether or not this share can be accessed by the website, and returns a `RequestBody`. Has no validation, so it is recommended to validate your `&bool` beforehand (e.g. ensure that you're not also setting `restrict_wget`!). Can be chained with other `set_???` functions.
+    pub fn set_restrict_website(mut self, new_website: bool) -> RequestBody {
         self.restrict_website = new_website.to_owned();
         self
     }
@@ -116,7 +120,7 @@ impl RequestBody {
             return Err(RequestError::RestrictionError);
         }
 
-        if self.exp < (SystemTime::now().duration_since(UNIX_EPOCH).expect("Time went backwards").as_millis() + DEFAULT_SHARE_TIME_HOURS * 60 * 60 * 1000) as u64 {
+        if self.exp < get_time() {
             return Err(RequestError::TimeError);
         }
 
@@ -124,7 +128,7 @@ impl RequestBody {
     }
 }
 
-///Sends a "ping" to the server, returns a `Result` which is Ok if the server is ready for a request, and returns `ServerError` otherwise.
+///Sends a "ping" to the server, returns a `Result` which is Ok bif the server is ready for a request, and returns `ServerError` otherwise.
 pub async fn check_heartbeat(address: &str) -> Result<(), ServerError> {
     reqwest::get(address).await?;
     Ok(())
@@ -223,8 +227,8 @@ mod server_io_tests {
             .set_exp(&1234)
             .set_name("Jane Doe")
             .set_path("bar.txt")
-            .set_restrict_website(&true)
-            .set_restrict_wget(&false);
+            .set_restrict_website(true)
+            .set_restrict_wget(false);
         
         assert_eq!(req_body.restrict_website, true);
         assert_eq!(req_body.restrict_wget, false);
@@ -266,8 +270,8 @@ mod server_io_tests {
 
         let mut req_body: RequestBody = RequestBody::new(&file.path).expect("Failed to create request body!");
         req_body = req_body
-            .set_restrict_wget(&true)
-            .set_restrict_website(&true);
+            .set_restrict_wget(true)
+            .set_restrict_website(true);
 
         match req_body.validate().expect_err("This should be an error!") {
             RequestError::RestrictionError => (),
@@ -310,8 +314,8 @@ mod server_io_tests {
 
         req_body = req_body
             .set_path(&file.path)
-            .set_restrict_website(&true)
-            .set_restrict_wget(&true);
+            .set_restrict_website(true)
+            .set_restrict_wget(true);
         match req_body.validate().expect_err("This should be an error!") {
             RequestError::RestrictionError => (),
             e => panic!("Expected error type of RestrictionError. Got : {}", e)

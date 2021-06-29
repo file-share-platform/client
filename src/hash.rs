@@ -3,6 +3,7 @@
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
 use std::time::{SystemTime, UNIX_EPOCH};
+use crate::common::*;
 
 ///Contains some basic values which aim to identify this computer.
 #[derive(Hash)]
@@ -23,7 +24,7 @@ impl Default for ComputerIdentifier {
             platform: whoami::platform().to_string(),
             operating_system: whoami::distro(),
             name: whoami::username(),
-            time: SystemTime::now().duration_since(UNIX_EPOCH).expect("Time went backwards").as_millis() as u128,
+            time: get_time() as u128,
         }
     }
 }

@@ -19,12 +19,14 @@
 mod errors;
 mod server_io;
 mod hash;
+mod common;
 
 use std::env;
 use std::path;
 use std::process::Command;
 use clap::{Arg, App};
 use server_io::{send_file, check_heartbeat};
+use common::*;
 
 extern crate clipboard;
 
@@ -37,7 +39,7 @@ const SIZE_LIMIT: u64 = 2147483648; //Set the file transfer limit default to 2 G
 const SERVER_BINARY_LOCATION: &str = "";
 const MAX_SERVER_START_ATTEMPTS: u8 = 3;
 const SERVER_IP_ADDRESS: &str = "http://127.0.0.1:8000";
-const DEFAULT_SHARE_TIME_HOURS: u128 = 48;
+const DEFAULT_SHARE_TIME_HOURS: u128 = 2;
 
 /// Entry Point
 #[tokio::main]
@@ -59,7 +61,7 @@ async fn main() {
             .short("t")
             .long("time")
             .takes_value(true)
-            .help("sets the amount of time (in hours) that the file should remain shared. Default is 2 hours (NOT SUPPORTED)"))
+            .help("sets the amount of time (in hours) that the file should remain shared. Default is 2 hours."))
         .arg(Arg::with_name("remove")
             .short("r")
             .long("remove")
@@ -72,15 +74,15 @@ async fn main() {
         .arg(Arg::with_name("restrict-wget")
             .long("restrict-wget")
             .takes_value(false)
-            .help("disables users downloading the file with wget, will force them to use web interface. (NOT SUPPORTED)"))
+            .help("disables users downloading the file with wget, will force them to use web interface."))
         .arg(Arg::with_name("restrict-website")
             .long("restrict-website")
             .takes_value(false)
-            .help("users will only be able to collect the file using curl or wget. (NOT SUPPORTED)"))
+            .help("users will only be able to collect the file using curl or wget."))
         .arg(Arg::with_name("force")
             .long("force")
             .takes_value(false)
-            .help("disables boundary checks set in the config file. (NOT SUPPORTED)"))
+            .help("disables boundary checks set in the config file."))
         .get_matches();
 
     let input_file: path::PathBuf = [
@@ -92,21 +94,6 @@ async fn main() {
             .unwrap()]
     .iter()
     .collect();
-
-    //We have recieved the given file for sharing by the user
-    //Check file exists
-    if !input_file.exists() {
-        return println!("Error, {} doesn't exist!", args.value_of("FILE").unwrap());
-    }
-    //Check file isn't directory
-    if input_file.is_dir() {
-        return println!("Error, you must provide a file, not a directory!");
-    }
-    //Check size of file doesn't exceed limit
-    if input_file.metadata().unwrap().len() > SIZE_LIMIT && !args.is_present("force") {
-        return println!("Error, your file exceeds the file sharing limit of 2GB! You may bypass this and try sharing anyway with `--force`, or adjust your config settings.");
-    }
-    //Server Checks
 
     //Check if server is running, if it's not then start it up. If we fail to start the server 3 times, fail out to the user.
     let mut start_attmpts: u8 = 0;
@@ -134,20 +121,30 @@ async fn main() {
             std::thread::sleep(std::time::Duration::from_millis(2000));
         }
     }
-    
-    //Lets copy the file to tmp, ready for sharing!
-    // let current_time = SystemTime::now().duration_since(UNIX_EPOCH).expect("Time went backwards").as_secs();
-    // let tmp_location: path::PathBuf = [env::temp_dir().to_str().unwrap(), NAME, &format!("{}-{}", current_time, args.value_of("FILE").unwrap())].iter().collect(); //TODO error checking
-
-    // if fs::copy(&input_file, &tmp_location).is_err() {
-    //     return println!("Error, failed when attempting to copy file to temporary location.\n    Copying from: {}\n  Copying to: {}", input_file.to_str().unwrap_or(""), tmp_location.to_str().unwrap_or(""));
-    // }
 
     //The server is running! Lets share the file.
-    let body: server_io::RequestBody = match server_io::RequestBody::new(input_file.to_str().unwrap()) {
+    let mut body: server_io::RequestBody = match server_io::RequestBody::new(input_file.to_str().unwrap()) {
         Ok(file) => file,
-        Err(e) => return println!("An error occured: {}", e.to_string()),
+        Err(e) => return println!("An error occured: {}", e),
     };
+
+    if args.is_present("restrict-wget") {
+        body = body.set_restrict_wget(true);
+    }
+
+    if args.is_present("restrict-website") {
+        body = body.set_restrict_website(true);
+    }
+
+    if let Some(share_time) = args.value_of("time") {
+        let time = share_time.parse::<u64>().expect("Please enter a valid share time!");
+        body = body.set_exp(&(get_time() + time * 60 * 60 * 1000));
+    }
+
+    match body.validate() {
+        Ok(_) => (),
+        Err(e) => return println!("An error occurred: {}", e),
+    }
 
     let req = send_file(&format!("{}/share", SERVER_IP_ADDRESS), body).await;
     if req.is_err() {
@@ -163,6 +160,5 @@ async fn main() {
     ctx.set_contents(response).expect("Error, failed to copy to clipboard! Please copy link manually.");
 
 
-    //TODO: Add an option to bypass this, and allow to share in-place (config?)
     //TODO: Add an option for debug logging
 }
