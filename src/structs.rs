@@ -72,7 +72,7 @@ pub struct Share {
     pub restrict_wget: bool,
     pub restrict_website: bool,
     pub name: String,
-    computer: String,
+    computer: u64,
     created: Option<u64>,
     size: u64,
     file_type: String,
