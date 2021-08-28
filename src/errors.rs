@@ -63,7 +63,7 @@ impl From<serde_json::Error> for ServerError {
 
 ///Represents the errors that can occur when attempting generating the request body client-side.
 #[derive(Debug)]
-pub enum RequestError {
+pub enum ShareError {
     ///An error occured trying to parse the file extension.
     FileExtensionError,
     ///An error occured trying to parse the file name.
@@ -76,23 +76,26 @@ pub enum RequestError {
     RestrictionError,
     ///Expiry is set to before the current time. 
     TimeError,
+    ///Failed to create a hard link to the file
+    HardLinkError(String),
 }
 
-impl fmt::Display for RequestError {
+impl fmt::Display for ShareError {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match &*self {
-            RequestError::FileExtensionError => f.write_str("Failed to parse file extension."),
-            RequestError::FileNameError => f.write_str("Failed to parse file name."),
-            RequestError::FileSizeError(text) => f.write_str(&text),
-            RequestError::FileExistError(text) => f.write_str(&text),
-            RequestError::RestrictionError => f.write_str("Cannot set both restrict_wget and restrict_website at the same time!"),
-            RequestError::TimeError => f.write_str("Expiry time set in the past."),
+            ShareError::FileExtensionError => f.write_str("Failed to parse file extension."),
+            ShareError::FileNameError => f.write_str("Failed to parse file name."),
+            ShareError::FileSizeError(text) => f.write_str(&text),
+            ShareError::FileExistError(text) => f.write_str(&text),
+            ShareError::RestrictionError => f.write_str("Cannot set both restrict_wget and restrict_website at the same time!"),
+            ShareError::TimeError => f.write_str("Expiry time set in the past."),
+            ShareError::HardLinkError(text) => f.write_str(&text),
         }
     }
 }
 
-impl<'r> From<std::io::Error> for RequestError { 
-    fn from(error: std::io::Error) -> RequestError {
-        RequestError::FileSizeError(error.to_string())
+impl<'r> From<std::io::Error> for ShareError { 
+    fn from(error: std::io::Error) -> ShareError {
+        ShareError::FileSizeError(error.to_string())
     }
 }

@@ -18,15 +18,15 @@
 
 mod errors;
 mod server_io;
-mod hash;
 mod common;
 
 use std::env;
 use std::path;
-use std::process::Command;
 use clap::{Arg, App};
-use server_io::{send_file, check_heartbeat};
+use server_io::{notify_new_share, check_heartbeat};
 use common::*;
+use std::io::prelude::*;
+use std::fs::File;
 
 extern crate clipboard;
 
@@ -36,10 +36,9 @@ use clipboard::ClipboardProvider;
 const NAME: &str = "fileshare";
 const VERSION: &str = "0.0.1";
 const SIZE_LIMIT: u64 = 2147483648; //Set the file transfer limit default to 2 GB. Should be enough for most people.
-const SERVER_BINARY_LOCATION: &str = "";
-const MAX_SERVER_START_ATTEMPTS: u8 = 3;
 const SERVER_IP_ADDRESS: &str = "http://127.0.0.1:8000";
 const DEFAULT_SHARE_TIME_HOURS: u128 = 2;
+const SERVER_FILE_LOCATION: &str ="/opt/fileShare";
 
 /// Entry Point
 #[tokio::main]
@@ -95,58 +94,41 @@ async fn main() {
     .iter()
     .collect();
 
-    //Check if server is running, if it's not then start it up. If we fail to start the server 3 times, fail out to the user.
-    let mut start_attmpts: u8 = 0;
-    loop {
-        if start_attmpts >= MAX_SERVER_START_ATTEMPTS {
-            return println!("Error, failed to start the file server! Is there a problem with the binary?");
-        } else {
-            start_attmpts += 1;
-        }
-        //Check that the server is up
-        if check_heartbeat(&format!("{}/heartbeat", SERVER_IP_ADDRESS)).await.is_ok() {
-            println!("File server is running!");
-            break; //Server is up!            
-        } else {
-            //Check the server binary is where it should be.
-            if !path::PathBuf::from(SERVER_BINARY_LOCATION).exists() {
-                return println!("Error, can't find the binary for the server! There may have been an installation issue.");
-            }
-
-            //Attempt to start server
-            println!("The file server appears to not be started. Making attempt {} of {} to start server.", start_attmpts, MAX_SERVER_START_ATTEMPTS);
-            Command::new(SERVER_BINARY_LOCATION)
-                .spawn()
-                .expect("failed to start the server");
-            std::thread::sleep(std::time::Duration::from_millis(2000));
-        }
+    //Check if server is running
+    if !check_heartbeat(&format!("{}/heartbeat", SERVER_IP_ADDRESS)).await.is_ok() {
+        return println!("Error: File server is not up!");            
     }
 
-    //The server is running! Lets share the file.
-    let mut body: server_io::RequestBody = match server_io::RequestBody::new(input_file.to_str().unwrap()) {
+    //Create a new share
+    let mut share_file: server_io::ShareFile = match server_io::ShareFile::new(input_file.to_str().unwrap()) {
         Ok(file) => file,
         Err(e) => return println!("An error occured: {}", e),
     };
 
     if args.is_present("restrict-wget") {
-        body = body.set_restrict_wget(true);
+        share_file = share_file.set_restrict_wget(true);
     }
 
     if args.is_present("restrict-website") {
-        body = body.set_restrict_website(true);
+        share_file = share_file.set_restrict_website(true);
     }
 
     if let Some(share_time) = args.value_of("time") {
         let time = share_time.parse::<u64>().expect("Please enter a valid share time!");
-        body = body.set_exp(&(get_time() + time * 60 * 60 * 1000));
+        share_file = share_file.set_exp(&(get_time() + time * 60 * 60 * 1000));
     }
 
-    match body.validate() {
+    match share_file.validate() {
         Ok(_) => (),
         Err(e) => return println!("An error occurred: {}", e),
     }
 
-    let req = send_file(&format!("{}/share", SERVER_IP_ADDRESS), body).await;
+    //Save the share
+    let share_file_name = format!("{}/{}.share", SERVER_FILE_LOCATION, share_file.get_id());
+    let mut file = File::create(&share_file_name).expect("Failed to create share file!");
+    file.write_all(share_file.to_json_string().expect("Error: Failed to create share file!").as_bytes()).expect("Failed to create share file!");
+    
+    let req = notify_new_share(&format!("{}/share", SERVER_IP_ADDRESS), share_file_name).await;
     if req.is_err() {
         return println!("Error, failed to send request to server! Error: {}", req.unwrap_err());
     }
