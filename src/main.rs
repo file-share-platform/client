@@ -25,8 +25,6 @@ use std::path;
 use clap::{Arg, App};
 use server_io::{notify_new_share, check_heartbeat};
 use common::*;
-use std::io::prelude::*;
-use std::fs::File;
 
 extern crate clipboard;
 
@@ -100,35 +98,31 @@ async fn main() {
     }
 
     //Create a new share
-    let mut share_file: server_io::ShareFile = match server_io::ShareFile::new(input_file.to_str().unwrap()) {
+    let mut share: server_io::Share = match server_io::Share::new(input_file.to_str().unwrap()) {
         Ok(file) => file,
         Err(e) => return println!("An error occured: {}", e),
     };
 
     if args.is_present("restrict-wget") {
-        share_file = share_file.set_restrict_wget(true);
+        share = share.set_restrict_wget(true);
     }
 
     if args.is_present("restrict-website") {
-        share_file = share_file.set_restrict_website(true);
+        share = share.set_restrict_website(true);
     }
 
     if let Some(share_time) = args.value_of("time") {
         let time = share_time.parse::<u64>().expect("Please enter a valid share time!");
-        share_file = share_file.set_exp(&(get_time() + time * 60 * 60 * 1000));
+        share = share.set_exp(&(get_time() + time * 60 * 60 * 1000));
     }
 
-    match share_file.validate() {
+    match share.validate() {
         Ok(_) => (),
         Err(e) => return println!("An error occurred: {}", e),
     }
 
-    //Save the share
-    let share_file_name = format!("{}/{}.share", SERVER_FILE_LOCATION, share_file.get_id());
-    let mut file = File::create(&share_file_name).expect("Failed to create share file!");
-    file.write_all(share_file.to_json_string().expect("Error: Failed to create share file!").as_bytes()).expect("Failed to create share file!");
-    
-    let req = notify_new_share(&format!("{}/share", SERVER_IP_ADDRESS), share_file_name).await;
+    //Save the share    
+    let req = notify_new_share(&format!("{}/share", SERVER_IP_ADDRESS), share).await;
     if req.is_err() {
         return println!("Error, failed to send request to server! Error: {}", req.unwrap_err());
     }

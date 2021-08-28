@@ -14,7 +14,7 @@ use uuid;
 
 ///Represents the data required to send a share request to the file server.
 #[derive(Serialize, Deserialize, Debug)]
-pub struct ShareFile {
+pub struct Share {
     id: String, //A uuid
     usr: String,
     exp: u64,
@@ -25,13 +25,13 @@ pub struct ShareFile {
     file_type: String,
 }
 #[allow(dead_code)]
-impl ShareFile {
+impl Share {
     ///Convert the file to a json string for saving.
     pub fn to_json_string(&self) -> Result<String, serde_json::Error> {
         serde_json::to_string(self)
     }
-    ///Returns a result which contains `ShareFile` if successful, otherwise retursn a `ShareError`. Populates all values with reasonable defaults derived from the provided path.
-    pub fn new(path_raw: &str) -> Result<ShareFile, ShareError> {
+    ///Returns a result which contains `Share` if successful, otherwise retursn a `ShareError`. Populates all values with reasonable defaults derived from the provided path.
+    pub fn new(path_raw: &str) -> Result<Share, ShareError> {
         //Check file exists
         let path = Path::new(path_raw);
         if !path.exists() {
@@ -67,7 +67,7 @@ impl ShareFile {
             return Err(ShareError::HardLinkError(e.to_string()));
         }
 
-        Ok(ShareFile {
+        Ok(Share {
             id,
             usr: whoami::realname(),
             exp: get_time() + (DEFAULT_SHARE_TIME_HOURS * 60 * 60 * 1000) as u64,
@@ -84,33 +84,33 @@ impl ShareFile {
         &self.id
     }
 
-    ///Takes a `&str` representing the new user, and returns a `ShareFile`. Has no validation, so it is recommended to validate your `&str` beforehand. Can be chained with other `set_???` functions.
-    pub fn set_usr(mut self, new_usr: &str) -> ShareFile {
+    ///Takes a `&str` representing the new user, and returns a `Share`. Has no validation, so it is recommended to validate your `&str` beforehand. Can be chained with other `set_???` functions.
+    pub fn set_usr(mut self, new_usr: &str) -> Share {
         self.usr = new_usr.to_owned();
         self
     }
-    ///Takes a `&u64` representing the new expiry time (in milliseconds since the epoch), and returns a `ShareFile`. Has no validation, so it is recommended to validate your `&u64` beforehand. Can be chained with other `set_???` functions.
-    pub fn set_exp(mut self, new_exp: &u64) -> ShareFile {
+    ///Takes a `&u64` representing the new expiry time (in milliseconds since the epoch), and returns a `Share`. Has no validation, so it is recommended to validate your `&u64` beforehand. Can be chained with other `set_???` functions.
+    pub fn set_exp(mut self, new_exp: &u64) -> Share {
         self.exp = new_exp.to_owned();
         self
     }
-    ///Takes a `bool` representing whether or not this share can be accessed by wget, and returns a `ShareFile`. Has no validation, so it is recommended to validate your `&bool` beforehand (e.g. ensure that you're not also setting `restrict_website`!). Can be chained with other `set_???` functions.
-    pub fn set_restrict_wget(mut self, new_wget: bool) -> ShareFile {
+    ///Takes a `bool` representing whether or not this share can be accessed by wget, and returns a `Share`. Has no validation, so it is recommended to validate your `&bool` beforehand (e.g. ensure that you're not also setting `restrict_website`!). Can be chained with other `set_???` functions.
+    pub fn set_restrict_wget(mut self, new_wget: bool) -> Share {
         self.restrict_wget = new_wget.to_owned();
         self
     }
-    ///Takes a `bool` representing whether or not this share can be accessed by the website, and returns a `ShareFile`. Has no validation, so it is recommended to validate your `&bool` beforehand (e.g. ensure that you're not also setting `restrict_wget`!). Can be chained with other `set_???` functions.
-    pub fn set_restrict_website(mut self, new_website: bool) -> ShareFile {
+    ///Takes a `bool` representing whether or not this share can be accessed by the website, and returns a `Share`. Has no validation, so it is recommended to validate your `&bool` beforehand (e.g. ensure that you're not also setting `restrict_wget`!). Can be chained with other `set_???` functions.
+    pub fn set_restrict_website(mut self, new_website: bool) -> Share {
         self.restrict_website = new_website.to_owned();
         self
     }
-    ///Takes a `&str` representing a new author name, and returns a `ShareFile`. Has no validation, so it is recommended to validate your `&str` beforehand. Can be chained with other `set_???` functions.
-    pub fn set_name(mut self, new_name: &str) -> ShareFile {
+    ///Takes a `&str` representing a new author name, and returns a `Share`. Has no validation, so it is recommended to validate your `&str` beforehand. Can be chained with other `set_???` functions.
+    pub fn set_name(mut self, new_name: &str) -> Share {
         self.name = new_name.to_owned();
         self
     }
-    ///Takes a `&u64` representing a file size override, and returns a `ShareFile`. Has no validation, so it is recommended to validate your `&u64` beforehand. Can be chained with other `set_???` functions.
-    pub fn set_size(mut self, new_size: &u64) -> ShareFile {
+    ///Takes a `&u64` representing a file size override, and returns a `Share`. Has no validation, so it is recommended to validate your `&u64` beforehand. Can be chained with other `set_???` functions.
+    pub fn set_size(mut self, new_size: &u64) -> Share {
         self.size = new_size.to_owned();
         self
     }
@@ -135,10 +135,10 @@ pub async fn check_heartbeat(address: &str) -> Result<(), ServerError> {
 }
 
 ///Notify the local fileserver that a new share has been created
-pub async fn notify_new_share(address: &str, file_name: String) -> Result<String, ServerError> {
+pub async fn notify_new_share(address: &str, file_name: Share) -> Result<String, ServerError> {
     let client = reqwest::Client::new();
     let res = client.post(address)
-        .body(file_name)
+        .body(file_name.to_json_string()?)
         .header(UserAgent, NAME)
         .header(ContentType, "text")
         .send()
