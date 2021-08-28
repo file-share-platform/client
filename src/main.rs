@@ -10,18 +10,19 @@
 
 //Global Config
 
-const SAVE_PATH: &str = "/home/josiah/MEGA/share";
+const SAVE_PATH: &str = "/opt/fileShare";
 const SERVER_IP: &str = "127.0.0.1:8000";
 
 #[macro_use] extern crate rocket;
 use rocket::response::{content, status};
 use rocket::http::{ContentType, Status};
-use std::path::PathBuf;
+
 mod structs;
-use structs::{Share, Link, FileDownload, UserAgent};
-use uuid::Uuid;
-use std::fs::File;
-use std::io::prelude::*;
+use structs::{Share, FileDownload, UserAgent};
+
+mod database;
+use database::{SharesDbConn, add_to_database, Search, setup};
+
 use rocket::fs::NamedFile;
 use rocket_dyn_templates::Template;
 
@@ -34,59 +35,33 @@ use rocket_dyn_templates::Template;
 /// ```DOS
 ///     WGET http://:SERVER_URL/download/some-uuid-code-yuup/YourFile/
 /// ```
-/// 
-#[get("/download/<id>/<file_name>?<force>")]
-async fn download(id: u128, file_name: String, user_agent: UserAgent, force: Option<String>) -> Result<FileDownload, (Status, String)> {
-    //We need to create a link, then check if the link exists
-    let link: Link = Link::new(&file_name, id);
-    //Check if the file exists
-    if !PathBuf::from(link.to_file()).exists() {
-        return Err((Status::NotFound, "File not found".into()));
-    }
+/// It's 
+#[get("/download/<uuid>/<file_name>?<force>")]
+async fn download(uuid: String, file_name: String, user_agent: UserAgent, force: Option<String>, conn: SharesDbConn) -> Result<FileDownload, (Status, String)> {
 
-    //Open file
-    let mut file = match File::open(PathBuf::from(link.to_file())) {
-        Ok(file) => file,
-        Err(e) => return Err((Status::InternalServerError, e.to_string()))
-    };
-    //Read file
-    let mut content: String = String::new();
-    match file.read_to_string(&mut content) {
-        Ok(_) => (),
-        Err(e) => return Err((Status::InternalServerError, e.to_string()))
-    };
-    //Parse content
-    let share: Share = match serde_json::from_str(&content) {
-        Ok(share) => share,
-        Err(e) => return Err((Status::InternalServerError, e.to_string())),
-    };
-    //Validate the share
-    match share.validate() {
-        Ok(_) => (),
-        Err(e) => return Err((Status::InternalServerError, e.to_string())),
-    };
+    let share: Share = Search::Uuid(uuid).find_share(&conn).await?;
 
     //Request is coming from wget or curl, and wget is enabled. Lets allow a download!
     if user_agent.agent.to_lowercase().contains("wget") || user_agent.agent.to_lowercase().contains("curl") || force.is_some() {
-        if share.restrict_wget && force.is_none() {
+        if *share.restrict_wget() && force.is_none() {
             return Err((Status::BadRequest, "Bad Request Client".into()));
         }
         //Download File
         return Ok(FileDownload::Download (
-            NamedFile::open(&share.path).await.unwrap(), //NB, while this could theoretically error share.validate() does a check that the file exists so it *shouldnt*.
+            NamedFile::open(format!("{}/hard_links/{}", SAVE_PATH, share.uuid())).await.unwrap(),
             ContentType::new("application", "octet-stream"),
-            rocket::http::Header::new("content-disposition", format!("attachment; filename=\"{}\"", &share.name)),
+            rocket::http::Header::new("content-disposition", format!("attachment; filename=\"{}\"", file_name)),
         ));
     } 
 
     //Otherwise, return them the page
-    if share.restrict_website {
+    if *share.restrict_website() {
         return Err((Status::BadRequest, "Bad Request Client".into()));
     }
-    return Ok(FileDownload::Page (
-        Template::render("download", &share),
+    Ok(FileDownload::Page (
+        Template::render("download", share),
         ContentType::new("text", "html")
-    ));
+    ))
 }
 
 
@@ -112,34 +87,16 @@ async fn download(id: u128, file_name: String, user_agent: UserAgent, force: Opt
 /// }
 /// ```
 #[post("/share", data="<share>")]
-fn share(share: Share) -> (Status, (ContentType, String)) {
-    //Process the share into an available download
-    //Create the link file, which is the file which holds the record of the shares we are looking to store.
-    let link: Link = Link::new(&share.name, Uuid::new_v4().as_u128());
+async fn share(share: Share, conn: SharesDbConn) -> Result<String, (Status, String)> {
+    let response = format!("http://{}/download/{}/{}.{}", SERVER_IP, share.uuid(), share.name(), share.file_type());
+    setup(&conn).await?;
+    //Validate hard link file exists
+    //TODO
 
-    //First check the file doesn't already exist!
-    if PathBuf::from(link.to_file()).exists() {
-        return (Status::BadRequest, (ContentType::new("text", "html"), String::from("This file has already been shared!")))
-    }
-
-    //Create the file
-    println!("{}",link.to_file());
-    let mut file = match File::create(link.to_file()) {
-        Ok(file) => file,
-        Err(e) => return (Status::InternalServerError, (ContentType::new("text", "html"), format!("Failed to create temporary file: {}", e.to_string()))),
-    };
-
-    //Write the relevant details to the file
-    let file_content = match serde_json::to_string(&share) {
-        Ok(data) => data,
-        Err(e) => return (Status::InternalServerError, (ContentType::new("text", "html"), format!("Failed to serialize response: {}", e.to_string()))),
-    };
-
-    if file.write_all(file_content.as_bytes()).is_err() {
-        return (Status::InternalServerError, (ContentType::new("text", "html"), String::from("Failed to write to link file")));
-    }
+    //Add share to database
+    add_to_database(&conn, share).await?;
     
-    (Status::Ok, (ContentType::new("text", "plain"), link.to_url()))
+    Ok(response)
 }
 
 /// Returns the status of the server, is meant to be used to check if the server is alive.
@@ -179,5 +136,6 @@ fn heartbeat() -> status::Custom<content::Json<&'static str>> {
 fn rocket() -> _ {
     rocket::build()
         .mount("/", routes![heartbeat, share, download])
+        .attach(SharesDbConn::fairing())
         .attach(Template::fairing())
 }
