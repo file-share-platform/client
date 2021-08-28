@@ -14,3 +14,4 @@ clipboard = "0.5.0"
 serde = {version = "1.0.126", features=["derive"]}
 serde_json = "1.0.64"
 whoami="1.1.2"
+uuid = { version = "0.8", features = ["serde", "v4"] }
