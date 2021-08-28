@@ -15,7 +15,7 @@ use uuid;
 ///Represents the data required to send a share request to the file server.
 #[derive(Serialize, Deserialize, Debug)]
 pub struct Share {
-    id: String, //A uuid
+    uuid: String, //A uuid
     usr: String,
     exp: u64,
     restrict_wget: bool,
@@ -60,15 +60,15 @@ impl Share {
             return Err(ShareError::FileSizeError("Too Large!".into()));
         } 
 
-        let id: String = uuid::Uuid::new_v4().to_string();
+        let uuid: String = uuid::Uuid::new_v4().to_string();
 
         //Create a hard link to the relevant file
-        if let Err(e) = hard_link(path_raw, format!("{}/hard_links/{}", SERVER_FILE_LOCATION, id)) {
+        if let Err(e) = hard_link(path_raw, format!("{}/hard_links/{}", SERVER_FILE_LOCATION, uuid)) {
             return Err(ShareError::HardLinkError(e.to_string()));
         }
 
         Ok(Share {
-            id,
+            uuid,
             usr: whoami::realname(),
             exp: get_time() + (DEFAULT_SHARE_TIME_HOURS * 60 * 60 * 1000) as u64,
             restrict_wget: false,
@@ -80,8 +80,8 @@ impl Share {
     }
 
     ///Returns the id of the current share file, as a readonly string slice.
-    pub fn get_id(&self) -> &str {
-        &self.id
+    pub fn get_uuid(&self) -> &str {
+        &self.uuid
     }
 
     ///Takes a `&str` representing the new user, and returns a `Share`. Has no validation, so it is recommended to validate your `&str` beforehand. Can be chained with other `set_???` functions.
@@ -140,7 +140,7 @@ pub async fn notify_new_share(address: &str, file_name: Share) -> Result<String,
     let res = client.post(address)
         .body(file_name.to_json_string()?)
         .header(UserAgent, NAME)
-        .header(ContentType, "text")
+        .header(ContentType, "text/plain")
         .send()
         .await?
         .text()
