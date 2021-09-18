@@ -1,22 +1,20 @@
 [package]
-name = "rust-sharing-server"
+name = "sharing-agent"
 version = "0.1.0"
-authors = ["Josiah Bull <josiah.bull7@gmail.com>"]
-edition = "2018"
+edition = "2021"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-rocket = "0.5.0-rc.1"
-log = "0.4"
-pretty_env_logger = "0.4.0"
-serde = { version = "1.0.126", features = ["derive"] }
-serde_json = "1.0.64"
-derive-getters = "0.2.0"
-[dependencies.rocket_dyn_templates]
-version = "0.1.0-rc.1"
-features = ["handlebars"]
-[dependencies.rocket_sync_db_pools]
-version = "0.1.0-rc.1"
-default-features = false
-features = ["sqlite_pool"]
+ws-com-framework= { path = "../ws-com-framework", features = ["client"] }
+uuid = { version = "0.8", features = ["serde", "v4"] }
+tokio = { version = "1", features = ["full"] }
+websocket = {version = "0.26.2", features = ["async"]}
+confy="0.4.0"
+mobc="0.7.3"
+mobc-postgres = { version = "*", features = ["with-chrono-0_4"] }
+pretty_env_logger="*"
+
+[dev-dependencies]
+warp="0.3.1"
+futures="0.3.17"
