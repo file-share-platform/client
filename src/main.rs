@@ -21,30 +21,27 @@ mod db;
 mod error;
 mod uploader;
 
-use websocket::ClientBuilder;
-use ws_com_framework::{File, Message, Receiver, Sender};
 use db::DBPool;
 use error::Error;
+use serde::{Deserialize, Serialize};
+use websocket::ClientBuilder;
+use ws_com_framework::{File, Message, Receiver, Sender};
+use tokio::fs;
 
-const SERVER_IP: &str = "127.0.0.1:3030";
-
-/// The maximum number of times to attempt upload to a fileserver before giving up
-const MAX_UPLOAD_ATTEMPTS: usize = 3;
-
-/// The location on the users PC where the file hard links are kept
-const FILE_HARD_LINK_LOCATION: &str = "./opt/file-share/files";
+const CONFIG_PATH: &str = "/opt/file-share/file-share.toml";
+const MIN_RECONNECT_DELAY: usize = 2000;
 
 /// A copy of println!, which only prints when the global const DEBUG is true.
 /// This makes debugging quick and easy to toggle.
 macro_rules! debug {
     () => {
-        if cfg!(debug_assertions) { 
-            println!(); 
+        if cfg!(debug_assertions) {
+            println!();
         }
     };
     ($($arg:tt)*) => {
-        if cfg!(debug_assertions) { 
-            println!($($arg)*); 
+        if cfg!(debug_assertions) {
+            println!($($arg)*);
         }
     }
 }
@@ -73,20 +70,65 @@ macro_rules! okie {
     };
 }
 
-use reqwest::blocking::Client;
+#[derive(Serialize, Deserialize, Clone)]
+struct Config {
+    server_ip: String,
+    port: i64,
+    prefix: String,
+    max_upload_attempts: usize,
+    home_dir_location: String,
+    reconnect_delay: usize,
+    id: Option<Id>,
+}
+
+impl Config {
+    fn is_valid(&self) -> bool {
+        //TODO
+        true
+    }
+    fn set_id(&mut self, id: Id) {
+        self.id = Some(id)
+    }
+}
+
+impl Default for Config {
+    fn default() -> Self {
+        Config {
+            server_ip: "127.0.0.1".to_owned(),
+            port: 3030,
+            prefix: "http".to_owned(),
+            max_upload_attempts: 3,
+            home_dir_location: "/opt/file-share".to_owned(),
+            reconnect_delay: MIN_RECONNECT_DELAY,
+            id: None,
+        }
+    }
+}
+
+/// Information required to connect to central api
+#[derive(Serialize, Deserialize, Clone)]
+struct Id {
+    id: i64,
+    unique_id: uuid::Uuid,
+}
+
+fn file_to_body(f: tokio::fs::File) -> reqwest::Body {
+    let stream = tokio_util::codec::FramedRead::new(f, tokio_util::codec::BytesCodec::new());
+    let body = reqwest::Body::wrap_stream(stream);
+    body
+}
 
 /// Self contained function to upload files to the server
-async fn upload_file(metadata: File) {
-    let url = format!("http://{}/upload/{}", SERVER_IP, metadata.stream_id()); //TODO add toggle for https
-    let loc = format!("{}/{}", FILE_HARD_LINK_LOCATION, metadata.id());
+async fn upload_file(metadata: File, cfg: Config, url: &str) {
+    let loc = format!("{}/hard_links/{}", cfg.home_dir_location, metadata.id());
     let mut a = 0;
     loop {
-        let f = std::fs::File::open(&loc).expect("File unexpectedly not available!");
-        let res = Client::new().post(&url).body(f).send();
+        let f = fs::File::open(&loc).await.expect("File unexpectedly not available!");
+        let res = reqwest::Client::new().post(url).body(file_to_body(f)).send().await;
         match res {
             Ok(_) => break,
             Err(e) => {
-                if a >= MAX_UPLOAD_ATTEMPTS {
+                if a >= cfg.max_upload_attempts {
                     debug_panic!("Failed to upload file to endpoint, error: {}", e);
                     break;
                 }
@@ -97,43 +139,50 @@ async fn upload_file(metadata: File) {
     debug!("File {} uploaded to: {}", metadata.name(), url);
 }
 
-async fn handle_message(m: Message, db: DBPool) -> Result<Option<Message>, Error>
-{
+async fn handle_message(m: Message, db: DBPool, cfg: Config) -> Result<Option<Message>, Error> {
     match m {
         Message::Upload(u) => {
             if let Some(f) = db::Search::uuid(u.id()).find(&db).await? {
                 // HACK This is very dangerous and should be migrated to a thread pool
                 // to avoid an accidental DDOS of the users system via upload threads.
-                // But it's *fine* for now.
-                tokio::task::spawn(upload_file(f, ));
-                return Ok(None)
+                // But it's *fine* for now.=
+                upload_file(f, cfg, u.url()).await;
+                return Ok(None);
             } else {
                 okie!(Message::Error(ws_com_framework::Error::FileDoesntExist))
             };
-        },
-        Message::Metadata(f) => {
-            if let Some(f) = db::Search::uuid(f.id()).find(&db).await? {
+        }
+        Message::Metadata(r) => {
+            if let Some(mut f) = db::Search::uuid(r.id()).find(&db).await? {
+                f.set_stream_id(r.stream_id());
                 okie!(f)
             }
             okie!(ws_com_framework::Error::FileDoesntExist)
-        },
+        }
         Message::Close(c) => return Err(Error::Closed(c)),
         e => {
             debug_panic!("Unsupported message, recieved! {:?}", e);
-            return Ok(None)
-        },
+            return Ok(None);
+        }
     }
 }
 
-async fn handle_ws<F, R, S, Fut>(handle: F, (mut rx, mut tx): (Receiver<R>, Sender<S>), db: &DBPool) -> Result<(), ()>
+async fn handle_ws<F, R, S, Fut>(
+    handle: F,
+    (mut rx, mut tx): (Receiver<R>, Sender<S>),
+    db: &DBPool,
+    cfg: Config,
+) -> Result<(), ()>
 where
-    F: Fn(Message, DBPool) -> Fut,
+    F: Fn(Message, DBPool, Config) -> Fut,
     R: ws_com_framework::RxStream,
     S: ws_com_framework::TxStream,
-    Fut: std::future::Future<Output = Result<Option<Message>, Error>>
+    Fut: std::future::Future<Output = Result<Option<Message>, Error>>,
 {
     //Loop to get messages
     while let Some(m) = rx.next().await {
+        // TODO spin each message off into a handler of a thread pool
+        // This will help to make large uploads be non-blocking
         let m: Message = match m {
             Ok(f) => f,
             Err(e) => {
@@ -148,7 +197,7 @@ where
             m
         );
 
-        let m = handle(m, db.clone()).await;
+        let m = handle(m, db.clone(), cfg.clone()).await;
         if let Err(e) = m {
             debug_panic!("Error occured! {:?}", e);
             continue;
@@ -189,19 +238,109 @@ async fn connect_sever(
     Ok((Receiver::new(rx), Sender::new(tx)))
 }
 
+/// We call to this in the event that we are not registered yet.
+async fn register_server(cfg: &Config) -> Result<Id, Error> {
+    let unique_id = generate_unique_id();
+    let ip = format!(
+        "{}://{}:{}/ws-register",
+        cfg.prefix, cfg.server_ip, cfg.port
+    );
+    let b = format!(
+        "{{
+        \"unique_id\": \"{}\"
+    }}",
+        unique_id
+    );
+
+    debug!(
+        "Attempting to register websocket with: \n{}\nAt IP {}",
+        b, ip
+    );
+
+    #[derive(Deserialize)]
+    struct IdRes {
+        message: String,
+    }
+    let id = reqwest::Client::new()
+        .post(ip)
+        .body(b)
+        .send()
+        .await?
+        .json::<IdRes>()
+        .await?;
+
+    Ok(Id {
+        unique_id,
+        id: id.message.parse()?,
+    })
+}
+
+/// Generate a unique id to represent this PC
+fn generate_unique_id() -> uuid::Uuid {
+    uuid::Uuid::new_v4()
+}
+
 #[tokio::main]
 async fn main() {
     pretty_env_logger::init();
 
-    let ip = format!("ws://{}/ws/1", SERVER_IP);
+    let mut cfg: Config = confy::load_path(CONFIG_PATH).expect("Failed to load config!");
 
     let mut db_pool = db::create_pool().expect("failed to create db pool");
-    db::init_db(&db_pool).await.expect("failed ti initalize db");
+    db::init_db(&db_pool).await.expect("failed to initalize db");
 
     loop {
-        let (rx, tx) = connect_sever(&ip).await.unwrap();
-        handle_ws(handle_message, (rx, tx),  &mut db_pool).await.unwrap();
-        break;
+        tokio::time::sleep(std::time::Duration::from_millis(std::cmp::max(
+            cfg.reconnect_delay as u64,
+            MIN_RECONNECT_DELAY as u64,
+        )))
+        .await;
+        // Register websocket if not registered
+        if cfg.clone().id.is_none() {
+            let id: Id = match register_server(&cfg).await {
+                Ok(f) => f,
+                Err(e) => {
+                    debug_panic!("Failed to register websocket {:?}", e);
+                    continue;
+                }
+            };
+            cfg.set_id(id);
+            debug!(
+                "Registered websocket with id {}",
+                cfg.clone().id.unwrap().id
+            );
+            if let Err(e) = confy::store_path(CONFIG_PATH, cfg.clone()) {
+                debug_panic!(
+                    "Failed to save config, quitting to prevent unintended errors: {}",
+                    e
+                );
+                continue;
+            };
+        }
+
+        if !cfg.is_valid() {
+            debug_panic!("Invalid config detected!");
+            continue;
+        }
+
+        let ip = format!(
+            "ws://{}:{}/ws/{}",
+            &cfg.server_ip,
+            &cfg.port,
+            cfg.clone().id.unwrap().id
+        );
+
+        let (rx, tx) = match connect_sever(&ip).await {
+            Ok(f) => f,
+            Err(e) => {
+                debug_panic!("Failed to connect to webserver {:?}", e);
+                continue;
+            }
+        };
+
+        handle_ws(handle_message, (rx, tx), &mut db_pool, cfg.clone())
+            .await
+            .expect("Not Implemented"); //TODO
     }
 
     debug!("Connection closed, Server Agent exiting....");
@@ -210,9 +349,9 @@ async fn main() {
 
 #[cfg(test)]
 mod websocket_tests {
-    use crate::{connect_sever, handle_ws};
-    use crate::db::DBPool;
     use crate::db;
+    use crate::db::DBPool;
+    use crate::{connect_sever, handle_ws, Config};
     use futures::{FutureExt, StreamExt};
     use std::time::Duration;
     use tokio::sync::oneshot;
@@ -280,14 +419,15 @@ mod websocket_tests {
 
     #[tokio::test]
     async fn test_db() {
-        let mut db_pool = db::create_pool().expect("failed to create db pool");
+        let db_pool = db::create_pool().expect("failed to create db pool");
         db::init_db(&db_pool).await.expect("failed to initalize db");
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 5)]
     async fn websocket_handle() {
         timeout(Duration::from_millis(5000), async {
-            let mut db_pool = db::create_pool().expect("failed to create db pool");
+            let cfg = Config::default(); //TODO should write custom config here
+            let db_pool = db::create_pool().expect("failed to create db pool");
             db::init_db(&db_pool).await.expect("failed to initalize db");
 
             let close_server_tx = create_websocket_server(([127, 0, 0, 1], 3031)).unwrap();
@@ -304,7 +444,11 @@ mod websocket_tests {
             tx.underlying().shutdown().unwrap();
 
             //This function should process the messages we sent (to ensure they're all getting through)
-            async fn handle(m: Message, db: DBPool) -> Result<Option<Message>, crate::error::Error> {
+            async fn handle(
+                m: Message,
+                _: DBPool,
+                _: Config,
+            ) -> Result<Option<Message>, crate::error::Error> {
                 match m.clone() {
                     Message::Message(t) => {
                         if t != "Hello, World!".to_owned() {
@@ -319,7 +463,7 @@ mod websocket_tests {
             let (tx, _) = tokio::sync::mpsc::unbounded_channel::<Message>();
             let s = Sender::new(tx);
 
-            handle_ws(handle, (rx, s), &db_pool).await.unwrap();
+            handle_ws(handle, (rx, s), &db_pool, cfg).await.unwrap();
 
             let _ = close_server_tx.send(());
         })

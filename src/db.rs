@@ -1,6 +1,7 @@
 //! Contains all database functionality
 
 use crate::error::Error;
+use chrono::prelude::*;
 use mobc::{Connection, Pool};
 use mobc_postgres::{tokio_postgres, PgConnectionManager};
 use std::fs;
@@ -33,11 +34,29 @@ pub trait FromDataBase: Sized {
 impl FromDataBase for File {
     type Error = Error;
     fn from_database(data: &Row) -> Result<Self, Self::Error> {
-        // let f = File::new(
-            // TODO
-        // );
-        // Ok(f)
-        Err(Error::Closed("Big sad".into()))
+        let id: uuid::Uuid = data.try_get::<usize, uuid::Uuid>(1).unwrap();
+        let created_at: DateTime<Utc> = data.try_get::<usize, DateTime<Utc>>(2).unwrap(); //Test timestamp
+        let expires: DateTime<Utc> = data.try_get::<usize, DateTime<Utc>>(3).unwrap(); //Test timestamp
+        let usr: String = data.try_get::<usize, String>(4).unwrap();
+        let website: bool = data.try_get::<usize, bool>(5).unwrap();
+        let wget: bool = data.try_get::<usize, bool>(6).unwrap();
+        let file_name: String = data.try_get::<usize, String>(7).unwrap();
+        let size: i64 = data.try_get::<usize, i64>(8).unwrap();
+        let file_type: String = data.try_get::<usize, String>(9).unwrap();
+
+        let f = File::new(
+            id,
+            created_at,
+            expires,
+            usr,
+            website,
+            wget,
+            file_name,
+            size as usize,
+            file_type,
+            0,
+        );
+        Ok(f)
     }
 }
 
@@ -87,7 +106,7 @@ impl Search {
     }
 }
 
-async fn search_database(db_pool: &DBPool, search: Search) -> Result<Vec<File>, Error> {
+async fn search_database<'a>(db_pool: &DBPool, search: Search) -> Result<Vec<File>, Error> {
     let conn = get_db_con(db_pool).await?;
 
     let rows = conn

@@ -9,12 +9,17 @@ edition = "2021"
 ws-com-framework= { path = "../ws-com-framework", features = ["client"] }
 uuid = { version = "0.8", features = ["serde", "v4"] }
 tokio = { version = "1", features = ["full"] }
+tokio-util = { version = "0.6.8", features = ["codec"] }
 websocket = {version = "0.26.2", features = ["async"]}
-confy="0.4.0"
-mobc="0.7.3"
-mobc-postgres = { version = "*", features = ["with-chrono-0_4"] }
+confy = { git = "https://github.com/JosiahBull/confy", features = ["toml_conf"] }
+mobc = "0.7.3"
+mobc-postgres = { version = "*", features = ["with-chrono-0_4", "with-uuid-0_8"] }
 pretty_env_logger="*"
-reqwest = { version = "0.11.4", features = ["blocking"] }
+reqwest = { version = "0.11.4", features = ["stream", "json"] }
+serde = {version = "1.0", features = ["derive"] }
+serde_derive = "1.0"
+dirs = "4.0.0"
+chrono = "0.4.19"
 
 [dev-dependencies]
 futures="0.3.17"

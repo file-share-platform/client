@@ -11,3 +11,8 @@ CREATE TABLE IF NOT EXISTS shares
     size BIGINT NOT NULL,
     file_type text NOT NULL
 );
+
+
+-- INSERT INTO shares (uuid, usr, website, wget, name, size, file_type)
+-- VALUES ('A0EEBC99-9C0B-4EF8-BB6D-6BB9BD380A11', 'josiah', TRUE, TRUE, 'my_file', 5, 'txt')
+-- RETURNING *;
