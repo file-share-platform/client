@@ -14,7 +14,8 @@ confy="0.4.0"
 mobc="0.7.3"
 mobc-postgres = { version = "*", features = ["with-chrono-0_4"] }
 pretty_env_logger="*"
+reqwest = { version = "0.11.4", features = ["blocking"] }
 
 [dev-dependencies]
-warp="0.3.1"
 futures="0.3.17"
+warp="0.3.1"

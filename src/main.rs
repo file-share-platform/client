@@ -22,28 +22,29 @@ mod error;
 mod uploader;
 
 use websocket::ClientBuilder;
-use ws_com_framework::{File, FileRequest, Message, Receiver, Sender};
-use db::{DBCon, DBPool};
+use ws_com_framework::{File, Message, Receiver, Sender};
+use db::DBPool;
 use error::Error;
 
-const SERVER_IP: &str = "ws://127.0.0.1:3030/ws/1";
-const SECURE_CONNECTION: bool = false; //TODO, not implemented
-const DEBUG: bool = true;
+const SERVER_IP: &str = "127.0.0.1:3030";
+
+/// The maximum number of times to attempt upload to a fileserver before giving up
+const MAX_UPLOAD_ATTEMPTS: usize = 3;
+
+/// The location on the users PC where the file hard links are kept
+const FILE_HARD_LINK_LOCATION: &str = "./opt/file-share/files";
 
 /// A copy of println!, which only prints when the global const DEBUG is true.
 /// This makes debugging quick and easy to toggle.
 macro_rules! debug {
     () => {
-        if DEBUG { println!(); }
-    };
-    ($fmt_string:expr) => {
-        if DEBUG { 
-            println!($fmt_string); 
+        if cfg!(debug_assertions) { 
+            println!(); 
         }
     };
-    ($fmt_string:expr, $( $arg:expr ),*) => {
-        if DEBUG { 
-            println!($fmt_string, $( $arg ),*); 
+    ($($arg:tt)*) => {
+        if cfg!(debug_assertions) { 
+            println!($($arg)*); 
         }
     }
 }
@@ -51,14 +52,14 @@ macro_rules! debug {
 /// When called, if application is in DEBUG mode will panic. Otherwise will merely print the error to the console.
 macro_rules! debug_panic {
     ($fmt_string:expr) => {
-        if DEBUG {
+        if cfg!(debug_assertions) {
             panic!($fmt_string);
         } else {
             println!($fmt_string);
         }
     };
     ($fmt_string:expr, $( $arg:expr ),*) => {
-        if DEBUG {
+        if cfg!(debug_assertions) {
             panic!($fmt_string, $( $arg ),*);
         } else {
             println!($fmt_string, $( $arg ),*);
@@ -72,12 +73,39 @@ macro_rules! okie {
     };
 }
 
+use reqwest::blocking::Client;
+
+/// Self contained function to upload files to the server
+async fn upload_file(metadata: File) {
+    let url = format!("http://{}/upload/{}", SERVER_IP, metadata.stream_id()); //TODO add toggle for https
+    let loc = format!("{}/{}", FILE_HARD_LINK_LOCATION, metadata.id());
+    let mut a = 0;
+    loop {
+        let f = std::fs::File::open(&loc).expect("File unexpectedly not available!");
+        let res = Client::new().post(&url).body(f).send();
+        match res {
+            Ok(_) => break,
+            Err(e) => {
+                if a >= MAX_UPLOAD_ATTEMPTS {
+                    debug_panic!("Failed to upload file to endpoint, error: {}", e);
+                    break;
+                }
+                a += 1;
+            }
+        }
+    }
+    debug!("File {} uploaded to: {}", metadata.name(), url);
+}
+
 async fn handle_message(m: Message, db: DBPool) -> Result<Option<Message>, Error>
 {
     match m {
         Message::Upload(u) => {
             if let Some(f) = db::Search::uuid(u.id()).find(&db).await? {
-                //TODO start file upload
+                // HACK This is very dangerous and should be migrated to a thread pool
+                // to avoid an accidental DDOS of the users system via upload threads.
+                // But it's *fine* for now.
+                tokio::task::spawn(upload_file(f, ));
                 return Ok(None)
             } else {
                 okie!(Message::Error(ws_com_framework::Error::FileDoesntExist))
@@ -85,9 +113,9 @@ async fn handle_message(m: Message, db: DBPool) -> Result<Option<Message>, Error
         },
         Message::Metadata(f) => {
             if let Some(f) = db::Search::uuid(f.id()).find(&db).await? {
-                return Ok(Some(f.into()))
+                okie!(f)
             }
-            return Ok(Some(ws_com_framework::Error::FileDoesntExist.into()))
+            okie!(ws_com_framework::Error::FileDoesntExist)
         },
         Message::Close(c) => return Err(Error::Closed(c)),
         e => {
@@ -120,7 +148,20 @@ where
             m
         );
 
-        handle(m, db.clone()).await.unwrap(); //TODO
+        let m = handle(m, db.clone()).await;
+        if let Err(e) = m {
+            debug_panic!("Error occured! {:?}", e);
+            continue;
+        }
+
+        debug!("Sending response to Central-API: {:?}", m);
+
+        if let Some(r) = m.unwrap() {
+            if let Err(e) = tx.send(r).await {
+                debug_panic!("Error occured! {:?}", e);
+                continue;
+            };
+        };
     }
     Ok(())
 }
@@ -152,15 +193,15 @@ async fn connect_sever(
 async fn main() {
     pretty_env_logger::init();
 
+    let ip = format!("ws://{}/ws/1", SERVER_IP);
+
     let mut db_pool = db::create_pool().expect("failed to create db pool");
     db::init_db(&db_pool).await.expect("failed ti initalize db");
 
     loop {
-        let (mut rx, mut tx) = connect_sever(SERVER_IP).await.unwrap();
-
-
-        let res = handle_ws(handle_message, (rx, tx),  &mut db_pool).await;
-
+        let (rx, tx) = connect_sever(&ip).await.unwrap();
+        handle_ws(handle_message, (rx, tx),  &mut db_pool).await.unwrap();
+        break;
     }
 
     debug!("Connection closed, Server Agent exiting....");
@@ -169,14 +210,16 @@ async fn main() {
 
 #[cfg(test)]
 mod websocket_tests {
-    use crate::{connect_sever, handle_ws, DEBUG};
+    use crate::{connect_sever, handle_ws};
+    use crate::db::DBPool;
+    use crate::db;
     use futures::{FutureExt, StreamExt};
     use std::time::Duration;
     use tokio::sync::oneshot;
     use tokio::time::timeout;
     use warp;
     use warp::Filter;
-    use ws_com_framework::{Message, Receiver, Sender};
+    use ws_com_framework::{Message, Sender};
     /// Spool up a simple websocket server, which is useful in tests, set to echo.
     fn create_websocket_server(ip: ([u8; 4], u16)) -> Result<oneshot::Sender<()>, ()> {
         let echo_ws = warp::any()
@@ -235,9 +278,18 @@ mod websocket_tests {
         .expect("Test failed due to timeout!");
     }
 
+    #[tokio::test]
+    async fn test_db() {
+        let mut db_pool = db::create_pool().expect("failed to create db pool");
+        db::init_db(&db_pool).await.expect("failed to initalize db");
+    }
+
     #[tokio::test(flavor = "multi_thread", worker_threads = 5)]
     async fn websocket_handle() {
         timeout(Duration::from_millis(5000), async {
+            let mut db_pool = db::create_pool().expect("failed to create db pool");
+            db::init_db(&db_pool).await.expect("failed to initalize db");
+
             let close_server_tx = create_websocket_server(([127, 0, 0, 1], 3031)).unwrap();
 
             let (rx, mut tx) = connect_sever("ws://127.0.0.1:3031/echo").await.unwrap();
@@ -252,7 +304,7 @@ mod websocket_tests {
             tx.underlying().shutdown().unwrap();
 
             //This function should process the messages we sent (to ensure they're all getting through)
-            fn handle<S>(m: Message, _: &mut S) -> Result<(), ()> {
+            async fn handle(m: Message, db: DBPool) -> Result<Option<Message>, crate::error::Error> {
                 match m.clone() {
                     Message::Message(t) => {
                         if t != "Hello, World!".to_owned() {
@@ -261,13 +313,13 @@ mod websocket_tests {
                     }
                     _ => panic!("Unexpected message recieved! {:?}", m),
                 }
-                Ok(())
+                Ok(None)
             }
 
             let (tx, _) = tokio::sync::mpsc::unbounded_channel::<Message>();
             let s = Sender::new(tx);
 
-            handle_ws(handle, (rx, s)).await.unwrap();
+            handle_ws(handle, (rx, s), &db_pool).await.unwrap();
 
             let _ = close_server_tx.send(());
         })
