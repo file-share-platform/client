@@ -239,12 +239,8 @@ async fn connect_sever(
 }
 
 /// We call to this in the event that we are not registered yet.
-async fn register_server(cfg: &Config) -> Result<Id, Error> {
+async fn register_server(ip: String) -> Result<Id, Error> {
     let unique_id = generate_unique_id();
-    let ip = format!(
-        "{}://{}:{}/ws-register",
-        cfg.prefix, cfg.server_ip, cfg.port
-    );
     let b = format!(
         "{{
         \"unique_id\": \"{}\"
@@ -297,7 +293,11 @@ async fn main() {
         .await;
         // Register websocket if not registered
         if cfg.clone().id.is_none() {
-            let id: Id = match register_server(&cfg).await {
+            let ip = format!(
+                "{}://{}:{}/ws-register",
+                cfg.prefix, cfg.server_ip, cfg.port
+            );
+            let id: Id = match register_server(ip).await {
                 Ok(f) => f,
                 Err(e) => {
                     debug_panic!("Failed to register websocket {:?}", e);
@@ -351,7 +351,7 @@ async fn main() {
 mod websocket_tests {
     use crate::db;
     use crate::db::DBPool;
-    use crate::{connect_sever, handle_ws, Config};
+    use crate::{connect_sever, handle_ws, Config, register_server};
     use futures::{FutureExt, StreamExt};
     use std::time::Duration;
     use tokio::sync::oneshot;
@@ -390,8 +390,26 @@ mod websocket_tests {
     }
 
     /// Create a simple webserver which parses some basic http requests.
-    fn create_http_server() -> Result<(), ()> {
-        Ok(())
+    fn create_http_server(ip: ([u8; 4], u16)) -> Result<oneshot::Sender<()>, ()> {
+        let register = warp::post()
+            .and(warp::path("test-register"))
+            .and(warp::path::end())
+            .map(|| {
+                format!("{{
+                    \"message\": \"10568\"
+                }}")
+            });
+
+        let routes = register;
+
+        let (tx, rx) = oneshot::channel();
+        let (_, server) = warp::serve(routes).bind_with_graceful_shutdown(ip, async {
+            rx.await.ok();
+        });
+
+        tokio::task::spawn(server);
+
+        Ok(tx)
     }
 
     /// Test that websocket is able to succesfully connect to a provided server, and send a simple message
@@ -399,9 +417,9 @@ mod websocket_tests {
     #[tokio::test(flavor = "multi_thread")]
     async fn websocket_connect() {
         timeout(Duration::from_millis(10_000), async {
-            let close_server_tx = create_websocket_server(([127, 0, 0, 1], 3030)).unwrap();
+            let close_server_tx = create_websocket_server(([127, 0, 0, 1], 3033)).unwrap();
 
-            let (mut rx, mut tx) = connect_sever("ws://127.0.0.1:3030/echo").await.unwrap();
+            let (mut rx, mut tx) = connect_sever("ws://127.0.0.1:3033/echo").await.unwrap();
 
             let msg = Message::Message("Hello, World!".into());
 
@@ -469,5 +487,16 @@ mod websocket_tests {
         })
         .await
         .expect("Test failed due to timeout!");
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn test_register() {
+        let close_server_tx = create_http_server(([127, 0, 0, 1], 3034)).unwrap();
+
+        let res = register_server("http://127.0.0.1:3034/test-register".into()).await.unwrap();
+
+        assert_eq!(res.id, 10568);
+
+        let _ = close_server_tx.send(());
     }
 }
