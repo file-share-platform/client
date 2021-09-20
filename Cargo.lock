@@ -1798,6 +1798,7 @@ dependencies = [
  "serde",
  "serde_derive",
  "tokio",
+ "tokio-stream",
  "tokio-util",
  "uuid",
  "warp",

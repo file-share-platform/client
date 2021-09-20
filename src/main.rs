@@ -8,7 +8,6 @@
 //! 1. Connect to the Central-API on first start, and attempt to request an ID.
 //! 2. Recieve our ID, and store that in a config file.
 //! 3. Attempt to connect to the websocket endpoint of the Central-API, on failure repeat steps 1 and 2 again.
-//!    Upon second failure, fail out to the user - a restart resets this counter.
 //! 4. With a succesful websocket connection gracefully handle incoming requests from the Central-API, primarily:
 //!     - Requests for metadata/file status.
 //!     - File upload requests.
@@ -24,9 +23,10 @@ mod uploader;
 use db::DBPool;
 use error::Error;
 use serde::{Deserialize, Serialize};
+use tokio::fs;
 use websocket::ClientBuilder;
 use ws_com_framework::{File, Message, Receiver, Sender};
-use tokio::fs;
+
 
 const CONFIG_PATH: &str = "/opt/file-share/file-share.toml";
 const MIN_RECONNECT_DELAY: usize = 2000;
@@ -99,7 +99,7 @@ impl Default for Config {
             prefix: "http".to_owned(),
             max_upload_attempts: 3,
             home_dir_location: "/opt/file-share".to_owned(),
-            reconnect_delay: MIN_RECONNECT_DELAY,
+            reconnect_delay: 60000,
             id: None,
         }
     }
@@ -123,8 +123,14 @@ async fn upload_file(metadata: File, cfg: Config, url: &str) {
     let loc = format!("{}/hard_links/{}", cfg.home_dir_location, metadata.id());
     let mut a = 0;
     loop {
-        let f = fs::File::open(&loc).await.expect("File unexpectedly not available!");
-        let res = reqwest::Client::new().post(url).body(file_to_body(f)).send().await;
+        let f = fs::File::open(&loc)
+            .await
+            .expect("File unexpectedly not available!");
+        let res = reqwest::Client::new()
+            .post(url)
+            .body(file_to_body(f))
+            .send()
+            .await;
         match res {
             Ok(_) => break,
             Err(e) => {
@@ -142,10 +148,7 @@ async fn upload_file(metadata: File, cfg: Config, url: &str) {
 async fn handle_message(m: Message, db: DBPool, cfg: Config) -> Result<Option<Message>, Error> {
     match m {
         Message::Upload(u) => {
-            if let Some(f) = db::Search::uuid(u.id()).find(&db).await? {
-                // HACK This is very dangerous and should be migrated to a thread pool
-                // to avoid an accidental DDOS of the users system via upload threads.
-                // But it's *fine* for now.=
+            if let Some(f) = db::Search::Uuid(u.id()).find(&db).await? {
                 upload_file(f, cfg, u.url()).await;
                 return Ok(None);
             } else {
@@ -153,7 +156,7 @@ async fn handle_message(m: Message, db: DBPool, cfg: Config) -> Result<Option<Me
             };
         }
         Message::Metadata(r) => {
-            if let Some(mut f) = db::Search::uuid(r.id()).find(&db).await? {
+            if let Some(mut f) = db::Search::Uuid(r.id()).find(&db).await? {
                 f.set_stream_id(r.stream_id());
                 okie!(f)
             }
@@ -169,20 +172,28 @@ async fn handle_message(m: Message, db: DBPool, cfg: Config) -> Result<Option<Me
 
 async fn handle_ws<F, R, S, Fut>(
     handle: F,
-    (mut rx, mut tx): (Receiver<R>, Sender<S>),
+    (mut tx_ws, mut rx_ws): (Sender<S>, Receiver<R>),
     db: &DBPool,
     cfg: Config,
 ) -> Result<(), ()>
 where
-    F: Fn(Message, DBPool, Config) -> Fut,
+    F: Fn(Message, DBPool, Config) -> Fut + Send + Sync + 'static + Copy,
     R: ws_com_framework::RxStream,
-    S: ws_com_framework::TxStream,
-    Fut: std::future::Future<Output = Result<Option<Message>, Error>>,
+    S: ws_com_framework::TxStream + Send + 'static,
+    Fut: std::future::Future<Output = Result<Option<Message>, Error>> + Send,
 {
+    let (tx_internal, mut rx_internal) = tokio::sync::mpsc::unbounded_channel::<Message>();
+    tokio::task::spawn(async move {
+        while let Some(m) = rx_internal.recv().await {
+            if let Err(e) = tx_ws.send(m).await {
+                debug_panic!("Error occured! {:?}", e);
+                return
+            };
+        }
+    });
+
     //Loop to get messages
-    while let Some(m) = rx.next().await {
-        // TODO spin each message off into a handler of a thread pool
-        // This will help to make large uploads be non-blocking
+    while let Some(m) = rx_ws.next().await {
         let m: Message = match m {
             Ok(f) => f,
             Err(e) => {
@@ -197,20 +208,25 @@ where
             m
         );
 
-        let m = handle(m, db.clone(), cfg.clone()).await;
-        if let Err(e) = m {
-            debug_panic!("Error occured! {:?}", e);
-            continue;
-        }
-
-        debug!("Sending response to Central-API: {:?}", m);
-
-        if let Some(r) = m.unwrap() {
-            if let Err(e) = tx.send(r).await {
+        // Ugly, but this is required to pass owned values into the thread
+        let db_o = db.clone();
+        let cfg_o = cfg.clone();
+        let tx_o = tx_internal.clone();
+        tokio::task::spawn(async move {
+            let m = handle(m, db_o, cfg_o).await;
+            if let Err(e) = m {
                 debug_panic!("Error occured! {:?}", e);
-                continue;
+                return
+            }
+    
+            debug!("Sending response to Central-API: {:?}", m);
+
+            if let Some(r) = m.unwrap() {
+                if let Err(e) = tx_o.send(r) {
+                    debug_panic!("Tried to send response through internal websocket, but failed \n{}", e);
+                };
             };
-        };
+        });
     }
     Ok(())
 }
@@ -223,17 +239,14 @@ async fn connect_sever(
         Receiver<websocket::receiver::Reader<std::net::TcpStream>>,
         Sender<websocket::sender::Writer<std::net::TcpStream>>,
     ),
-    (),
+    Error,
 > {
-    let client = ClientBuilder::new(ip)
-        .expect("Failed to construct client") //TODO don't panic here!
-        .connect_insecure()
-        .expect("Failed to connect to Central-Api"); //TODO don't panic here!
+    let client = ClientBuilder::new(ip)?.connect_insecure()?; //TODO add toggle for secure vs insecure
 
     debug!("Client succesfully connected to Central-Api at {}", ip);
 
     //Split streams into components, and wrapper them with communication framework
-    let (rx, tx) = client.split().expect("Failed to split client streams");
+    let (rx, tx) = client.split()?;
 
     Ok((Receiver::new(rx), Sender::new(tx)))
 }
@@ -338,20 +351,22 @@ async fn main() {
             }
         };
 
-        handle_ws(handle_message, (rx, tx), &mut db_pool, cfg.clone())
+        handle_ws(handle_message, (tx, rx), &mut db_pool, cfg.clone())
             .await
             .expect("Not Implemented"); //TODO
     }
 
-    debug!("Connection closed, Server Agent exiting....");
-    std::process::exit(0);
+    //TODO Implement a ctrl+c catch to close
+
+    // debug!("Connection closed, Server Agent exiting....");
+    // std::process::exit(0);
 }
 
 #[cfg(test)]
 mod websocket_tests {
     use crate::db;
     use crate::db::DBPool;
-    use crate::{connect_sever, handle_ws, Config, register_server};
+    use crate::{connect_sever, handle_ws, register_server, Config};
     use futures::{FutureExt, StreamExt};
     use std::time::Duration;
     use tokio::sync::oneshot;
@@ -395,9 +410,11 @@ mod websocket_tests {
             .and(warp::path("test-register"))
             .and(warp::path::end())
             .map(|| {
-                format!("{{
+                format!(
+                    "{{
                     \"message\": \"10568\"
-                }}")
+                }}"
+                )
             });
 
         let routes = register;
@@ -481,7 +498,7 @@ mod websocket_tests {
             let (tx, _) = tokio::sync::mpsc::unbounded_channel::<Message>();
             let s = Sender::new(tx);
 
-            handle_ws(handle, (rx, s), &db_pool, cfg).await.unwrap();
+            handle_ws(handle, (s, rx), &db_pool, cfg).await.unwrap();
 
             let _ = close_server_tx.send(());
         })
@@ -493,7 +510,9 @@ mod websocket_tests {
     async fn test_register() {
         let close_server_tx = create_http_server(([127, 0, 0, 1], 3034)).unwrap();
 
-        let res = register_server("http://127.0.0.1:3034/test-register".into()).await.unwrap();
+        let res = register_server("http://127.0.0.1:3034/test-register".into())
+            .await
+            .unwrap();
 
         assert_eq!(res.id, 10568);
 

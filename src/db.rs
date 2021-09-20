@@ -85,15 +85,16 @@ pub async fn init_db(pool: &DBPool) -> Result<(), Error> {
 }
 
 pub enum Search {
+    #[allow(dead_code)]
     Id(usize),
-    uuid(uuid::Uuid),
+    Uuid(uuid::Uuid),
 }
 
 impl Search {
     fn get_search_term(self) -> String {
         match self {
             Search::Id(i) => format!("{} = {}", "id", i),
-            Search::uuid(s) => format!("{} = '{}'", "uuid", s),
+            Search::Uuid(s) => format!("{} = '{}'", "uuid", s),
         }
     }
 

@@ -10,6 +10,7 @@ pub enum Error {
     Closed(String),
     Http(reqwest::Error),
     Conversion(String),
+    WebSocket(websocket::WebSocketError),
 }
 
 impl std::convert::From<std::io::Error> for Error {
@@ -29,3 +30,17 @@ impl std::convert::From<std::num::ParseIntError> for Error {
         Error::Conversion(e.to_string())
     }
 }
+
+impl std::convert::From<websocket::client::ParseError> for Error {
+    fn from(e: websocket::client::ParseError) -> Error {
+        Error::Conversion(e.to_string())
+    }
+}
+
+impl std::convert::From<websocket::WebSocketError> for Error {
+    fn from(e: websocket::WebSocketError) -> Error {
+        Error::WebSocket(e)
+    }
+}
+
+//TODO implement to_string
