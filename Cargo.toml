@@ -6,11 +6,10 @@ edition = "2021"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-ws-com-framework= { path = "../ws-com-framework", features = ["client"] }
+ws-com-framework= { git="https://github.com/file-share-platform/ws-com-framework", features = ["client"], rev="028ddf5" }
 uuid = { version = "0.8", features = ["serde", "v4"] }
 tokio = { version = "1", features = ["full"] }
 tokio-util = { version = "0.6.8", features = ["codec"] }
-websocket = {version = "0.26.2", features = ["async"]}
 confy = { git = "https://github.com/JosiahBull/confy", features = ["toml_conf"] }
 mobc = "0.7.3"
 mobc-postgres = { version = "*", features = ["with-chrono-0_4", "with-uuid-0_8"] }
@@ -21,7 +20,9 @@ serde_derive = "1.0"
 dirs = "4.0.0"
 chrono = "0.4.19"
 tokio-stream="0.1.7"
+tokio-tungstenite = {version="0.15.0", features=["rustls-tls"]}
+futures-util="0.3.17"
+futures="0.3.17"
 
 [dev-dependencies]
-futures="0.3.17"
 warp="0.3.1"

@@ -54,7 +54,6 @@ impl FromDataBase for File {
             file_name,
             size as usize,
             file_type,
-            0,
         );
         Ok(f)
     }

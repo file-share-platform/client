@@ -24,9 +24,8 @@ use db::DBPool;
 use error::Error;
 use serde::{Deserialize, Serialize};
 use tokio::fs;
-use websocket::ClientBuilder;
-use ws_com_framework::{File, Message, Receiver, Sender};
-
+use ws_com_framework::{File, Message, Receiver, Sender, message::Upload};
+use futures::StreamExt;
 
 const CONFIG_PATH: &str = "/opt/file-share/file-share.toml";
 const MIN_RECONNECT_DELAY: usize = 2000;
@@ -73,7 +72,6 @@ macro_rules! okie {
 #[derive(Serialize, Deserialize, Clone)]
 struct Config {
     server_ip: String,
-    port: i64,
     prefix: String,
     max_upload_attempts: usize,
     home_dir_location: String,
@@ -94,13 +92,15 @@ impl Config {
 impl Default for Config {
     fn default() -> Self {
         Config {
-            server_ip: "127.0.0.1".to_owned(),
-            port: 3030,
-            prefix: "http".to_owned(),
+            server_ip: "josiahbull.com".to_owned(),
+            prefix: "https".to_owned(),
             max_upload_attempts: 3,
             home_dir_location: "/opt/file-share".to_owned(),
             reconnect_delay: 60000,
-            id: None,
+            id: Some(Id {
+                id: 1,
+                unique_id: uuid::Uuid::parse_str("ed9879fa-b565-47d0-8fcd-f18bb07c740b").unwrap()
+            }),
         }
     }
 }
@@ -147,7 +147,7 @@ async fn upload_file(metadata: File, cfg: Config, url: &str) {
 
 async fn handle_message(m: Message, db: DBPool, cfg: Config) -> Result<Option<Message>, Error> {
     match m {
-        Message::Upload(u) => {
+        Message::UploadRequest(u) => {
             if let Some(f) = db::Search::Uuid(u.id()).find(&db).await? {
                 upload_file(f, cfg, u.url()).await;
                 return Ok(None);
@@ -155,10 +155,12 @@ async fn handle_message(m: Message, db: DBPool, cfg: Config) -> Result<Option<Me
                 okie!(Message::Error(ws_com_framework::Error::FileDoesntExist))
             };
         }
-        Message::Metadata(r) => {
-            if let Some(mut f) = db::Search::Uuid(r.id()).find(&db).await? {
-                f.set_stream_id(r.stream_id());
-                okie!(f)
+        Message::MetadataRequest(r) => {
+            if let Some(f) = db::Search::Uuid(r.id()).find(&db).await? {
+                okie!(Message::MetadataResponse(Upload::new(
+                    r.url().to_string(),
+                    f,
+                )))
             }
             okie!(ws_com_framework::Error::FileDoesntExist)
         }
@@ -236,19 +238,21 @@ async fn connect_sever(
     ip: &str,
 ) -> Result<
     (
-        Receiver<websocket::receiver::Reader<std::net::TcpStream>>,
-        Sender<websocket::sender::Writer<std::net::TcpStream>>,
+        Receiver<futures_util::stream::SplitStream<tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>>>,
+        Sender<futures_util::stream::SplitSink<tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>, tokio_tungstenite::tungstenite::Message>>,
     ),
     Error,
 > {
-    let client = ClientBuilder::new(ip)?.connect_insecure()?; //TODO add toggle for secure vs insecure
+    debug!("Attempting to connect to {}", ip);
+
+    let (client, _) = tokio_tungstenite::connect_async(ip).await.expect("Failed to connect"); //TODO error handling
 
     debug!("Client succesfully connected to Central-Api at {}", ip);
 
     //Split streams into components, and wrapper them with communication framework
-    let (rx, tx) = client.split()?;
+    let (rx, tx) = client.split();
 
-    Ok((Receiver::new(rx), Sender::new(tx)))
+    Ok((Receiver::new(tx), Sender::new(rx)))
 }
 
 /// We call to this in the event that we are not registered yet.
@@ -291,24 +295,21 @@ fn generate_unique_id() -> uuid::Uuid {
 
 #[tokio::main]
 async fn main() {
+    debug!("Starting...");
     pretty_env_logger::init();
 
     let mut cfg: Config = confy::load_path(CONFIG_PATH).expect("Failed to load config!");
+    // let mut cfg: Config = Config::default();
 
     let mut db_pool = db::create_pool().expect("failed to create db pool");
     db::init_db(&db_pool).await.expect("failed to initalize db");
 
     loop {
-        tokio::time::sleep(std::time::Duration::from_millis(std::cmp::max(
-            cfg.reconnect_delay as u64,
-            MIN_RECONNECT_DELAY as u64,
-        )))
-        .await;
         // Register websocket if not registered
         if cfg.clone().id.is_none() {
             let ip = format!(
-                "{}://{}:{}/ws-register",
-                cfg.prefix, cfg.server_ip, cfg.port
+                "{}://{}/api/v1/client/ws-register",
+                cfg.prefix, cfg.server_ip
             );
             let id: Id = match register_server(ip).await {
                 Ok(f) => f,
@@ -337,9 +338,8 @@ async fn main() {
         }
 
         let ip = format!(
-            "ws://{}:{}/ws/{}",
+            "wss://{}/api/v1/client/ws/{}",
             &cfg.server_ip,
-            &cfg.port,
             cfg.clone().id.unwrap().id
         );
 
@@ -351,9 +351,17 @@ async fn main() {
             }
         };
 
+        //TODO validation here
+
         handle_ws(handle_message, (tx, rx), &mut db_pool, cfg.clone())
             .await
             .expect("Not Implemented"); //TODO
+
+        tokio::time::sleep(std::time::Duration::from_millis(std::cmp::max(
+            cfg.reconnect_delay as u64,
+            MIN_RECONNECT_DELAY as u64,
+        )))
+        .await;
     }
 
     //TODO Implement a ctrl+c catch to close
@@ -367,7 +375,7 @@ mod websocket_tests {
     use crate::db;
     use crate::db::DBPool;
     use crate::{connect_sever, handle_ws, register_server, Config};
-    use futures::{FutureExt, StreamExt};
+    use futures::{FutureExt, StreamExt, SinkExt};
     use std::time::Duration;
     use tokio::sync::oneshot;
     use tokio::time::timeout;
@@ -475,9 +483,7 @@ mod websocket_tests {
             //Send relevant sequences of messages
             tx.send(msg.clone()).await.unwrap();
             tx.send(e_msg.clone()).await.unwrap();
-
-            tx.underlying().shutdown().unwrap();
-
+            tx.underlying().close().await.unwrap();
             //This function should process the messages we sent (to ensure they're all getting through)
             async fn handle(
                 m: Message,
