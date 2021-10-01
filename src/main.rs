@@ -22,10 +22,10 @@ mod uploader;
 
 use db::DBPool;
 use error::Error;
+use futures::StreamExt;
 use serde::{Deserialize, Serialize};
 use tokio::fs;
-use ws_com_framework::{File, Message, Receiver, Sender, message::Upload};
-use futures::StreamExt;
+use ws_com_framework::{message::Upload, File, Message, Receiver, Sender};
 
 const CONFIG_PATH: &str = "/opt/file-share/file-share.toml";
 const MIN_RECONNECT_DELAY: usize = 2000;
@@ -92,15 +92,12 @@ impl Config {
 impl Default for Config {
     fn default() -> Self {
         Config {
-            server_ip: "josiahbull.com".to_owned(),
-            prefix: "https".to_owned(),
+            server_ip: "localhost:3030".to_owned(),
+            prefix: "http".to_owned(),
             max_upload_attempts: 3,
             home_dir_location: "/opt/file-share".to_owned(),
             reconnect_delay: 60000,
-            id: Some(Id {
-                id: 1,
-                unique_id: uuid::Uuid::parse_str("ed9879fa-b565-47d0-8fcd-f18bb07c740b").unwrap()
-            }),
+            id: None,
         }
     }
 }
@@ -108,14 +105,13 @@ impl Default for Config {
 /// Information required to connect to central api
 #[derive(Serialize, Deserialize, Clone)]
 struct Id {
-    id: i64,
-    unique_id: uuid::Uuid,
+    public_id: String,
+    private_key: String,
 }
 
 fn file_to_body(f: tokio::fs::File) -> reqwest::Body {
     let stream = tokio_util::codec::FramedRead::new(f, tokio_util::codec::BytesCodec::new());
-    let body = reqwest::Body::wrap_stream(stream);
-    body
+    reqwest::Body::wrap_stream(stream)
 }
 
 /// Self contained function to upload files to the server
@@ -148,15 +144,15 @@ async fn upload_file(metadata: File, cfg: Config, url: &str) {
 async fn handle_message(m: Message, db: DBPool, cfg: Config) -> Result<Option<Message>, Error> {
     match m {
         Message::UploadRequest(u) => {
-            if let Some(f) = db::Search::Uuid(u.id()).find(&db).await? {
+            if let Some(f) = db::Search::PublicId(u.id().to_string()).find(&db).await? {
                 upload_file(f, cfg, u.url()).await;
-                return Ok(None);
+                Ok(None)
             } else {
                 okie!(Message::Error(ws_com_framework::Error::FileDoesntExist))
-            };
+            }
         }
         Message::MetadataRequest(r) => {
-            if let Some(f) = db::Search::Uuid(r.id()).find(&db).await? {
+            if let Some(f) = db::Search::PublicId(r.id().to_string()).find(&db).await? {
                 okie!(Message::MetadataResponse(Upload::new(
                     r.url().to_string(),
                     f,
@@ -164,10 +160,15 @@ async fn handle_message(m: Message, db: DBPool, cfg: Config) -> Result<Option<Me
             }
             okie!(ws_com_framework::Error::FileDoesntExist)
         }
-        Message::Close(c) => return Err(Error::Closed(c)),
+        Message::Close(c) => Err(Error::Closed(c)),
+        Message::AuthReq => {
+            okie!(Message::AuthResponse(ws_com_framework::AuthKey {
+                key: cfg.id.unwrap().private_key.as_bytes().try_into().unwrap()
+            }))
+        }
         e => {
             debug_panic!("Unsupported message, recieved! {:?}", e);
-            return Ok(None);
+            Ok(None)
         }
     }
 }
@@ -189,7 +190,7 @@ where
         while let Some(m) = rx_internal.recv().await {
             if let Err(e) = tx_ws.send(m).await {
                 debug_panic!("Error occured! {:?}", e);
-                return
+                return;
             };
         }
     });
@@ -218,14 +219,17 @@ where
             let m = handle(m, db_o, cfg_o).await;
             if let Err(e) = m {
                 debug_panic!("Error occured! {:?}", e);
-                return
+                return;
             }
-    
+
             debug!("Sending response to Central-API: {:?}", m);
 
             if let Some(r) = m.unwrap() {
                 if let Err(e) = tx_o.send(r) {
-                    debug_panic!("Tried to send response through internal websocket, but failed \n{}", e);
+                    debug_panic!(
+                        "Tried to send response through internal websocket, but failed \n{}",
+                        e
+                    );
                 };
             };
         });
@@ -238,14 +242,29 @@ async fn connect_sever(
     ip: &str,
 ) -> Result<
     (
-        Receiver<futures_util::stream::SplitStream<tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>>>,
-        Sender<futures_util::stream::SplitSink<tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>, tokio_tungstenite::tungstenite::Message>>,
+        Receiver<
+            futures_util::stream::SplitStream<
+                tokio_tungstenite::WebSocketStream<
+                    tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>,
+                >,
+            >,
+        >,
+        Sender<
+            futures_util::stream::SplitSink<
+                tokio_tungstenite::WebSocketStream<
+                    tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>,
+                >,
+                tokio_tungstenite::tungstenite::Message,
+            >,
+        >,
     ),
     Error,
 > {
     debug!("Attempting to connect to {}", ip);
 
-    let (client, _) = tokio_tungstenite::connect_async(ip).await.expect("Failed to connect"); //TODO error handling
+    let (client, _) = tokio_tungstenite::connect_async(ip)
+        .await
+        .expect("Failed to connect"); //TODO error handling
 
     debug!("Client succesfully connected to Central-Api at {}", ip);
 
@@ -257,51 +276,25 @@ async fn connect_sever(
 
 /// We call to this in the event that we are not registered yet.
 async fn register_server(ip: String) -> Result<Id, Error> {
-    let unique_id = generate_unique_id();
-    let b = format!(
-        "{{
-        \"unique_id\": \"{}\"
-    }}",
-        unique_id
-    );
+    debug!("Attempting to register websocket with At IP {}", ip);
 
-    debug!(
-        "Attempting to register websocket with: \n{}\nAt IP {}",
-        b, ip
-    );
-
-    #[derive(Deserialize)]
-    struct IdRes {
-        message: String,
-    }
     let id = reqwest::Client::new()
-        .post(ip)
-        .body(b)
+        .post(&ip)
         .send()
         .await?
-        .json::<IdRes>()
+        .json::<Id>()
         .await?;
 
-    Ok(Id {
-        unique_id,
-        id: id.message.parse()?,
-    })
-}
-
-/// Generate a unique id to represent this PC
-fn generate_unique_id() -> uuid::Uuid {
-    uuid::Uuid::new_v4()
+    Ok(id)
 }
 
 #[tokio::main]
 async fn main() {
     debug!("Starting...");
-    pretty_env_logger::init();
 
     let mut cfg: Config = confy::load_path(CONFIG_PATH).expect("Failed to load config!");
-    // let mut cfg: Config = Config::default();
 
-    let mut db_pool = db::create_pool().expect("failed to create db pool");
+    let db_pool = db::create_pool().expect("failed to create db pool");
     db::init_db(&db_pool).await.expect("failed to initalize db");
 
     loop {
@@ -321,7 +314,7 @@ async fn main() {
             cfg.set_id(id);
             debug!(
                 "Registered websocket with id {}",
-                cfg.clone().id.unwrap().id
+                cfg.clone().id.unwrap().public_id
             );
             if let Err(e) = confy::store_path(CONFIG_PATH, cfg.clone()) {
                 debug_panic!(
@@ -338,9 +331,9 @@ async fn main() {
         }
 
         let ip = format!(
-            "wss://{}/api/v1/client/ws/{}",
+            "ws://{}/api/v1/client/ws/{}",
             &cfg.server_ip,
-            cfg.clone().id.unwrap().id
+            cfg.clone().id.unwrap().public_id
         );
 
         let (rx, tx) = match connect_sever(&ip).await {
@@ -353,7 +346,7 @@ async fn main() {
 
         //TODO validation here
 
-        handle_ws(handle_message, (tx, rx), &mut db_pool, cfg.clone())
+        handle_ws(handle_message, (tx, rx), &db_pool, cfg.clone())
             .await
             .expect("Not Implemented"); //TODO
 
@@ -375,7 +368,7 @@ mod websocket_tests {
     use crate::db;
     use crate::db::DBPool;
     use crate::{connect_sever, handle_ws, register_server, Config};
-    use futures::{FutureExt, StreamExt, SinkExt};
+    use futures::{FutureExt, SinkExt, StreamExt};
     use std::time::Duration;
     use tokio::sync::oneshot;
     use tokio::time::timeout;
@@ -419,9 +412,11 @@ mod websocket_tests {
             .and(warp::path::end())
             .map(|| {
                 format!(
-                    "{{
-                    \"message\": \"10568\"
-                }}"
+                    "
+                    {{
+                        \"public_id\": \"7N58aK\", 
+                        \"private_key\": \"oVZBbqJm5vXCmfTP8wQA0n13FeKd5Ego\"
+                    }}"
                 )
             });
 
@@ -442,9 +437,9 @@ mod websocket_tests {
     #[tokio::test(flavor = "multi_thread")]
     async fn websocket_connect() {
         timeout(Duration::from_millis(10_000), async {
-            let close_server_tx = create_websocket_server(([127, 0, 0, 1], 3033)).unwrap();
+            let close_server_tx = create_websocket_server(([127, 0, 0, 1], 2033)).unwrap();
 
-            let (mut rx, mut tx) = connect_sever("ws://127.0.0.1:3033/echo").await.unwrap();
+            let (mut rx, mut tx) = connect_sever("ws://127.0.0.1:2033/echo").await.unwrap();
 
             let msg = Message::Message("Hello, World!".into());
 
@@ -473,9 +468,9 @@ mod websocket_tests {
             let db_pool = db::create_pool().expect("failed to create db pool");
             db::init_db(&db_pool).await.expect("failed to initalize db");
 
-            let close_server_tx = create_websocket_server(([127, 0, 0, 1], 3031)).unwrap();
+            let close_server_tx = create_websocket_server(([127, 0, 0, 1], 2031)).unwrap();
 
-            let (rx, mut tx) = connect_sever("ws://127.0.0.1:3031/echo").await.unwrap();
+            let (rx, mut tx) = connect_sever("ws://127.0.0.1:2031/echo").await.unwrap();
 
             let msg = Message::Message("Hello, World!".into());
             let e_msg = Message::Message("Hello, World!".into());
@@ -514,13 +509,17 @@ mod websocket_tests {
 
     #[tokio::test(flavor = "multi_thread")]
     async fn test_register() {
-        let close_server_tx = create_http_server(([127, 0, 0, 1], 3034)).unwrap();
+        let close_server_tx = create_http_server(([127, 0, 0, 1], 2034)).unwrap();
 
-        let res = register_server("http://127.0.0.1:3034/test-register".into())
+        let res = register_server("http://127.0.0.1:2034/test-register".into())
             .await
             .unwrap();
 
-        assert_eq!(res.id, 10568);
+        assert_eq!(res.public_id, "7N58aK".to_owned());
+        assert_eq!(
+            res.private_key,
+            "oVZBbqJm5vXCmfTP8wQA0n13FeKd5Ego".to_owned()
+        );
 
         let _ = close_server_tx.send(());
     }

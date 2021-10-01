@@ -1,7 +1,7 @@
 CREATE TABLE IF NOT EXISTS shares
 (
     id BIGSERIAL PRIMARY KEY NOT NULL,
-    uuid UUID NOT NULL,
+    public_id text NOT NULL,
     created_at timestamp with time zone DEFAULT (now() at time zone 'utc'),
     expires timestamp with time zone DEFAULT (now() at time zone 'utc'),
     usr text NOT NULL,

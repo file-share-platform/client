@@ -34,7 +34,7 @@ pub trait FromDataBase: Sized {
 impl FromDataBase for File {
     type Error = Error;
     fn from_database(data: &Row) -> Result<Self, Self::Error> {
-        let id: uuid::Uuid = data.try_get::<usize, uuid::Uuid>(1).unwrap();
+        let id: String = data.try_get::<usize, String>(1).unwrap();
         let created_at: DateTime<Utc> = data.try_get::<usize, DateTime<Utc>>(2).unwrap(); //Test timestamp
         let expires: DateTime<Utc> = data.try_get::<usize, DateTime<Utc>>(3).unwrap(); //Test timestamp
         let usr: String = data.try_get::<usize, String>(4).unwrap();
@@ -86,14 +86,14 @@ pub async fn init_db(pool: &DBPool) -> Result<(), Error> {
 pub enum Search {
     #[allow(dead_code)]
     Id(usize),
-    Uuid(uuid::Uuid),
+    PublicId(String),
 }
 
 impl Search {
     fn get_search_term(self) -> String {
         match self {
             Search::Id(i) => format!("{} = {}", "id", i),
-            Search::Uuid(s) => format!("{} = '{}'", "uuid", s),
+            Search::PublicId(s) => format!("{} = '{}'", "public_id", s),
         }
     }
 
@@ -108,7 +108,6 @@ impl Search {
 
 async fn search_database<'a>(db_pool: &DBPool, search: Search) -> Result<Vec<File>, Error> {
     let conn = get_db_con(db_pool).await?;
-
     let rows = conn
         .query(
             format!(
