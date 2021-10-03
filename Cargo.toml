@@ -1,22 +1,27 @@
 [package]
-name = "rust-sharing-server"
+name = "sharing-agent"
 version = "0.1.0"
-authors = ["Josiah Bull <josiah.bull7@gmail.com>"]
-edition = "2018"
+edition = "2021"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-rocket = "0.5.0-rc.1"
-log = "0.4"
-pretty_env_logger = "0.4.0"
-serde = { version = "1.0.126", features = ["derive"] }
-serde_json = "1.0.64"
-derive-getters = "0.2.0"
-[dependencies.rocket_dyn_templates]
-version = "0.1.0-rc.1"
-features = ["handlebars"]
-[dependencies.rocket_sync_db_pools]
-version = "0.1.0-rc.1"
-default-features = false
-features = ["sqlite_pool"]
+ws-com-framework= { git="https://github.com/file-share-platform/ws-com-framework", default-features = false, features = ["client", "wrapper-tungstenite"], rev="3a9c2fa" }
+tokio = { version = "1", features = ["full"] }
+tokio-util = { version = "0.6.8", features = ["codec"] }
+confy = { git = "https://github.com/JosiahBull/confy", features = ["toml_conf"] }
+mobc = "0.7.3"
+mobc-postgres = { version = "*", features = ["with-chrono-0_4", "with-uuid-0_8"] }
+reqwest = { version = "0.11.4", features = ["stream", "json"] }
+serde = {version = "1.0", features = ["derive"] }
+serde_derive = "1.0"
+dirs = "4.0.0"
+chrono = "0.4.19"
+tokio-stream = "0.1.7"
+tokio-tungstenite = { version = "0.15.0", features = ["rustls-tls"] }
+futures-util = "0.3.17"
+futures = "0.3.17"
+
+[dev-dependencies]
+warp="0.3.1"
+ws-com-framework= { git="https://github.com/file-share-platform/ws-com-framework", default-features = false, features = ["client", "wrapper-tokio"], rev="3a9c2fa" }
