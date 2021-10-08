@@ -7,11 +7,15 @@ edition = "2018"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-clap="2.33.3"
-reqwest="0.11.3"
-tokio = { version = "1.5.0", features = ["full"] }
+utils = { git = "https://github.com/file-share-platform/utils", default-features = false, features = ["hex"]}
+tokio = { version = "1.5.0", features = ["full"] } #TODO filter the feature flags for this
+ws-com-framework= { git="https://github.com/file-share-platform/ws-com-framework", default-features = false, rev="550d7fe" }
+clap = "2.33.3"
+reqwest = "0.11.3"
 clipboard = "0.5.0"
-serde = {version = "1.0.126", features=["derive"]}
-serde_json = "1.0.64"
-whoami="1.1.2"
-uuid = { version = "0.8", features = ["serde", "v4"] }
+whoami = "1.1.2"
+confy = "0.4.0"
+
+mobc="0.7.3"
+mobc-postgres = { version = "*", features = ["with-chrono-0_4"] }
+chrono = { version = "0.4" }
