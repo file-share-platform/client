@@ -1,0 +1,13 @@
+codecov:
+  require_ci_to_pass: true
+
+coverage:
+  status:
+    patch:
+      default:
+        target: 70%
+        threshold: 5%
+    project:
+      default:
+        target: 70%
+        threshold: 5%
