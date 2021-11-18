@@ -1,21 +1,17 @@
 [package]
-name = "rust-sharing-cli"
+name = "cli"
 version = "0.1.0"
 authors = ["Josiah Bull <josiah.bull7@gmail.com>"]
-edition = "2018"
+edition = "2021"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
 utils = { git = "https://github.com/file-share-platform/utils", default-features = false, features = ["hex"]}
-tokio = { version = "1.5.0", features = ["full"] } #TODO filter the feature flags for this
-ws-com-framework= { git="https://github.com/file-share-platform/ws-com-framework", default-features = false, rev="550d7fe" }
-clap = "2.33.3"
-reqwest = "0.11.3"
-clipboard = "0.5.0"
-whoami = "1.1.2"
-confy = "0.4.0"
+ws-com-framework = { git="https://github.com/file-share-platform/ws-com-framework", default-features = false, rev= "550d7fe" }
+config = { path = "../config" }
+database = { path = "../database" }
 
-mobc="0.7.3"
-mobc-postgres = { version = "*", features = ["with-chrono-0_4"] }
+clap = "2.33.3"
+whoami = "1.1.2"
 chrono = { version = "0.4" }
