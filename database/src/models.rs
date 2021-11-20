@@ -1,12 +1,12 @@
+use super::schema::*;
 use chrono::NaiveDateTime;
 use diesel::Insertable;
-use super::schema::*;
 use ws_com_framework::File;
 
 #[derive(Queryable, Insertable)]
 #[table_name = "shares"]
 pub struct Share {
-    pub id: String,
+    pub id: Vec<u8>,
     pub user: String,
     pub exp: NaiveDateTime,
     pub crt: NaiveDateTime,
@@ -15,11 +15,10 @@ pub struct Share {
     pub ext: String,
 }
 
-//XXX this type conversion is temporary, until ws-com-framework can be updated
 impl From<&File> for Share {
     fn from(f: &File) -> Self {
         Share {
-            id: f.id.clone(),
+            id: f.id.to_vec(),
             user: f.user.clone(),
             exp: f.exp.naive_utc(),
             crt: f.crt.naive_utc(),

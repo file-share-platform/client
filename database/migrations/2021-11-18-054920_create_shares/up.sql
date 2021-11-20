@@ -1,5 +1,5 @@
 CREATE TABLE shares (
-    id TEXT NOT NULL,
+    id BLOB NOT NULL,
     user TEXT NOT NULL,
     exp DATETIME NOT NULL,
     crt DATETIME NOT NULL,

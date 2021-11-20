@@ -1,6 +1,6 @@
 table! {
     shares (id) {
-        id -> Text,
+        id -> Blob,
         user -> Text,
         exp -> Timestamp,
         crt -> Timestamp,

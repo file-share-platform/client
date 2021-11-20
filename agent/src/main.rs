@@ -16,22 +16,20 @@
 //! 5. In the event that the Central-API is not available for a connection or disconnects us, sleep for 1 minute then
 //!    re-attempt the connection.
 
-mod db;
 mod error;
-mod uploader;
 
-use db::DBPool;
+use std::sync::Arc;
+
+use config::{Config, Id};
+use database::{establish_connection, find_share_by_id};
 use error::Error;
 use futures::StreamExt;
-use serde::{Deserialize, Serialize};
 use tokio::fs;
 use ws_com_framework::{message::Upload, File, Message, Receiver, Sender};
 
-const CONFIG_PATH: &str = "/opt/file-share/file-share.toml";
-const MIN_RECONNECT_DELAY: usize = 2000;
+const MIN_RECONNECT_DELAY: usize = 5000;
 
-/// A copy of println!, which only prints when the global const DEBUG is true.
-/// This makes debugging quick and easy to toggle.
+/// A wrapper of println!, which only prints if we are in debug mode, not release.
 macro_rules! debug {
     () => {
         if cfg!(debug_assertions) {
@@ -69,54 +67,18 @@ macro_rules! okie {
     };
 }
 
-#[derive(Serialize, Deserialize, Clone)]
-struct Config {
-    server_ip: String,
-    prefix: String,
-    max_upload_attempts: usize,
-    home_dir_location: String,
-    reconnect_delay: usize,
-    id: Option<Id>,
-}
-
-impl Config {
-    fn is_valid(&self) -> bool {
-        //TODO
-        true
-    }
-    fn set_id(&mut self, id: Id) {
-        self.id = Some(id)
-    }
-}
-
-impl Default for Config {
-    fn default() -> Self {
-        Config {
-            server_ip: "localhost:3030".to_owned(),
-            prefix: "http".to_owned(),
-            max_upload_attempts: 3,
-            home_dir_location: "/opt/file-share".to_owned(),
-            reconnect_delay: 60000,
-            id: None,
-        }
-    }
-}
-
-/// Information required to connect to central api
-#[derive(Serialize, Deserialize, Clone)]
-struct Id {
-    public_id: String,
-    private_key: String,
-}
-
 fn file_to_body(f: tokio::fs::File) -> reqwest::Body {
     let stream = tokio_util::codec::FramedRead::new(f, tokio_util::codec::BytesCodec::new());
     reqwest::Body::wrap_stream(stream)
 }
 
 /// Self contained function to upload files to the server
-async fn upload_file(metadata: File, cfg: Config, url: &str) {
-    let loc = format!("{}/hard_links/{}", cfg.home_dir_location, metadata.id());
+async fn upload_file(metadata: File, config: Arc<Config<'static>>, url: &str) {
+    let loc = format!(
+        "{}/hard_links/{}",
+        config.file_store_location(),
+        String::from_utf8_lossy(&metadata.id)
+    );
     let mut a = 0;
     loop {
         let f = fs::File::open(&loc)
@@ -130,7 +92,7 @@ async fn upload_file(metadata: File, cfg: Config, url: &str) {
         match res {
             Ok(_) => break,
             Err(e) => {
-                if a >= cfg.max_upload_attempts {
+                if a >= config.max_upload_attempts() {
                     debug_panic!("Failed to upload file to endpoint, error: {}", e);
                     break;
                 }
@@ -138,32 +100,37 @@ async fn upload_file(metadata: File, cfg: Config, url: &str) {
             }
         }
     }
-    debug!("File {} uploaded to: {}", metadata.name(), url);
+    debug!("File {} uploaded to: {}", metadata.name, url);
 }
 
-async fn handle_message(m: Message, db: DBPool, cfg: Config) -> Result<Option<Message>, Error> {
+async fn handle_message(
+    m: Message,
+    config: Arc<Config<'static>>,
+) -> Result<Option<Message>, Box<dyn std::error::Error>> {
     match m {
         Message::UploadRequest(u) => {
-            if let Some(f) = db::Search::PublicId(u.id().to_string()).find(&db).await? {
-                upload_file(f, cfg, u.url()).await;
+            let conn = establish_connection()?;
+            let item = find_share_by_id(&conn, &u.id)?;
+            if let Some(f) = item {
+                upload_file(f, config, &u.url).await;
                 Ok(None)
             } else {
                 okie!(Message::Error(ws_com_framework::Error::FileDoesntExist))
             }
         }
         Message::MetadataRequest(r) => {
-            if let Some(f) = db::Search::PublicId(r.id().to_string()).find(&db).await? {
+            let conn = establish_connection()?;
+            if let Some(f) = find_share_by_id(&conn, &r.id)? {
                 okie!(Message::MetadataResponse(Upload::new(
-                    r.url().to_string(),
+                    r.url,
                     f,
                 )))
             }
             okie!(ws_com_framework::Error::FileDoesntExist)
         }
-        Message::Close(c) => Err(Error::Closed(c)),
         Message::AuthReq => {
             okie!(Message::AuthResponse(ws_com_framework::AuthKey {
-                key: cfg.id.unwrap().private_key.as_bytes().try_into().unwrap()
+                key: config.private_id().unwrap().as_bytes().try_into().unwrap() //HACK
             }))
         }
         e => {
@@ -176,14 +143,13 @@ async fn handle_message(m: Message, db: DBPool, cfg: Config) -> Result<Option<Me
 async fn handle_ws<F, R, S, Fut>(
     handle: F,
     (mut tx_ws, mut rx_ws): (Sender<S>, Receiver<R>),
-    db: &DBPool,
-    cfg: Config,
+    config: Arc<Config<'static>>,
 ) -> Result<(), ()>
 where
-    F: Fn(Message, DBPool, Config) -> Fut + Send + Sync + 'static + Copy,
+    F: Fn(Message, Arc<Config<'static>>) -> Fut + Send + Sync + 'static + Copy,
     R: ws_com_framework::RxStream,
     S: ws_com_framework::TxStream + Send + 'static,
-    Fut: std::future::Future<Output = Result<Option<Message>, Error>> + Send,
+    Fut: std::future::Future<Output = Result<Option<Message>, Box<dyn std::error::Error>>> + Send,
 {
     let (tx_internal, mut rx_internal) = tokio::sync::mpsc::unbounded_channel::<Message>();
     tokio::task::spawn(async move {
@@ -194,6 +160,8 @@ where
             };
         }
     });
+
+    let mut handles = vec![];
 
     //Loop to get messages
     while let Some(m) = rx_ws.next().await {
@@ -212,11 +180,10 @@ where
         );
 
         // Ugly, but this is required to pass owned values into the thread
-        let db_o = db.clone();
-        let cfg_o = cfg.clone();
         let tx_o = tx_internal.clone();
-        tokio::task::spawn(async move {
-            let m = handle(m, db_o, cfg_o).await;
+        let cfg = config.clone();
+        let h = tokio::task::spawn(async move {
+            let m = handle(m, cfg).await;
             if let Err(e) = m {
                 debug_panic!("Error occured! {:?}", e);
                 return;
@@ -233,7 +200,12 @@ where
                 };
             };
         });
+
+        handles.push(h);
     }
+
+    futures::future::join_all(handles).await;
+
     Ok(())
 }
 
@@ -278,62 +250,46 @@ async fn connect_sever(
 async fn register_server(ip: String) -> Result<Id, Error> {
     debug!("Attempting to register websocket with At IP {}", ip);
 
-    let id = reqwest::Client::new()
+    let response = reqwest::Client::new()
         .post(&ip)
         .send()
         .await?
         .json::<Id>()
         .await?;
 
-    Ok(id)
+    Ok(response)
 }
 
 #[tokio::main]
-async fn main() {
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
     debug!("Starting...");
+    let mut config: Config<'static> = Config::load_config()?;
 
-    let mut cfg: Config = confy::load_path(CONFIG_PATH).expect("Failed to load config!");
+    // Register websocket if not registered
+    if config.public_id().is_none() {
+        let ip = format!("{}/client/ws-register", config.server_address());
 
-    let db_pool = db::create_pool().expect("failed to create db pool");
-    db::init_db(&db_pool).await.expect("failed to initalize db");
+        let id: Id = match register_server(ip).await {
+            Ok(f) => f,
+            Err(e) => panic!("Failed to register websocket {:?}", e),
+        };
+
+        config.set_id(id);
+
+        //SAFETY: We set the id above, so this should never panic
+        debug!(
+            "Registered websocket with id {}",
+            config.public_id().unwrap()
+        );
+    }
+
+    let config = Arc::new(config);
 
     loop {
-        // Register websocket if not registered
-        if cfg.clone().id.is_none() {
-            let ip = format!(
-                "{}://{}/api/v1/client/ws-register",
-                cfg.prefix, cfg.server_ip
-            );
-            let id: Id = match register_server(ip).await {
-                Ok(f) => f,
-                Err(e) => {
-                    debug_panic!("Failed to register websocket {:?}", e);
-                    continue;
-                }
-            };
-            cfg.set_id(id);
-            debug!(
-                "Registered websocket with id {}",
-                cfg.clone().id.unwrap().public_id
-            );
-            if let Err(e) = confy::store_path(CONFIG_PATH, cfg.clone()) {
-                debug_panic!(
-                    "Failed to save config, quitting to prevent unintended errors: {}",
-                    e
-                );
-                continue;
-            };
-        }
-
-        if !cfg.is_valid() {
-            debug_panic!("Invalid config detected!");
-            continue;
-        }
-
         let ip = format!(
-            "ws://{}/api/v1/client/ws/{}",
-            &cfg.server_ip,
-            cfg.clone().id.unwrap().public_id
+            "{}/client/ws/{}",
+            config.websocket_address(),
+            config.public_id().unwrap()
         );
 
         let (rx, tx) = match connect_sever(&ip).await {
@@ -344,14 +300,12 @@ async fn main() {
             }
         };
 
-        //TODO validation here
-
-        handle_ws(handle_message, (tx, rx), &db_pool, cfg.clone())
+        handle_ws(handle_message, (tx, rx), config.clone())
             .await
             .expect("Not Implemented"); //TODO
 
         tokio::time::sleep(std::time::Duration::from_millis(std::cmp::max(
-            cfg.reconnect_delay as u64,
+            (config.reconnect_delay_minutes() * 60 * 1000) as u64,
             MIN_RECONNECT_DELAY as u64,
         )))
         .await;
@@ -365,11 +319,9 @@ async fn main() {
 
 #[cfg(test)]
 mod websocket_tests {
-    use crate::db;
-    use crate::db::DBPool;
-    use crate::{connect_sever, handle_ws, register_server, Config};
+    use super::{connect_sever, handle_ws, register_server, Config};
     use futures::{FutureExt, SinkExt, StreamExt};
-    use std::time::Duration;
+    use std::{sync::Arc, time::Duration};
     use tokio::sync::oneshot;
     use tokio::time::timeout;
     use warp;
@@ -455,18 +407,10 @@ mod websocket_tests {
         .expect("Test failed due to timeout!");
     }
 
-    #[tokio::test]
-    async fn test_db() {
-        let db_pool = db::create_pool().expect("failed to create db pool");
-        db::init_db(&db_pool).await.expect("failed to initalize db");
-    }
-
     #[tokio::test(flavor = "multi_thread", worker_threads = 5)]
     async fn websocket_handle() {
         timeout(Duration::from_millis(5000), async {
-            let cfg = Config::default(); //TODO should write custom config here
-            let db_pool = db::create_pool().expect("failed to create db pool");
-            db::init_db(&db_pool).await.expect("failed to initalize db");
+            let cfg = Arc::new(Config::load_config().unwrap());
 
             let close_server_tx = create_websocket_server(([127, 0, 0, 1], 2031)).unwrap();
 
@@ -482,9 +426,8 @@ mod websocket_tests {
             //This function should process the messages we sent (to ensure they're all getting through)
             async fn handle(
                 m: Message,
-                _: DBPool,
-                _: Config,
-            ) -> Result<Option<Message>, crate::error::Error> {
+                _: Arc<Config<'static>>,
+            ) -> Result<Option<Message>, Box<dyn std::error::Error>> {
                 match m.clone() {
                     Message::Message(t) => {
                         if t != "Hello, World!".to_owned() {
@@ -499,7 +442,7 @@ mod websocket_tests {
             let (tx, _) = tokio::sync::mpsc::unbounded_channel::<Message>();
             let s = Sender::new(tx);
 
-            handle_ws(handle, (s, rx), &db_pool, cfg).await.unwrap();
+            handle_ws(handle, (s, rx), cfg).await.unwrap();
 
             let _ = close_server_tx.send(());
         })
@@ -515,10 +458,13 @@ mod websocket_tests {
             .await
             .unwrap();
 
-        assert_eq!(res.public_id, "7N58aK".to_owned());
+        let mut cfg = Config::load_config().unwrap();
+        cfg.set_id(res);
+
+        assert_eq!(cfg.public_id().unwrap(), "7N58aK");
         assert_eq!(
-            res.private_key,
-            "oVZBbqJm5vXCmfTP8wQA0n13FeKd5Ego".to_owned()
+            cfg.private_id().unwrap(),
+            "oVZBbqJm5vXCmfTP8wQA0n13FeKd5Ego"
         );
 
         let _ = close_server_tx.send(());

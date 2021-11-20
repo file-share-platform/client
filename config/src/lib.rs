@@ -1,6 +1,10 @@
+use std::error::Error;
+
+use serde_derive::Deserialize;
+
 #[derive(Debug, Clone)]
 pub struct Config<'r> {
-    agent_id: Option<Id<'r>>,
+    agent_id: Option<Id>,
     websocket_address: &'r str,
     server_address: &'r str,
     file_store_location: &'r str,
@@ -11,17 +15,18 @@ pub struct Config<'r> {
 }
 
 /// Information required to connect to central api
-#[derive(Debug, Clone)]
-pub struct Id<'r> {
-    public_id: &'r str,
-    private_key: &'r str,
+#[derive(Debug, Clone, Deserialize)]
+pub struct Id {
+    public_id: String,
+    private_key: String,
 }
 
 impl<'r> Config<'r> {
-    pub fn load_config() -> Config<'r> {
+    pub fn load_config() -> Result<Config<'r>, Box<dyn Error>> {
         //TODO load from disk
-        //TODO validate that the file_store_location exists, if it doesn't we should create it.
-        Config {
+        //TODO validate that the file_store_location exists.
+        //TODO automatically acquire an agent_id if we haven't before, and eliminate the "none" option here, and then save it to disk.
+        Ok(Config {
             agent_id: None,
             websocket_address: "ws://localhost:8000/api/v1",
             server_address: "http://localhost:8000/api/v1",
@@ -30,20 +35,24 @@ impl<'r> Config<'r> {
             size_limit: 2147483648,
             default_share_time_hours: 48,
             reconnect_delay_minutes: 15,
-        }
+        })
     }
 
-    pub fn public_id(&self) -> Option<&'r str> {
+    pub fn set_id(&mut self, id: Id) {
+        self.agent_id = Some(id);
+    }
+
+    pub fn public_id(&self) -> Option<&str> {
         if let Some(id) = &self.agent_id {
-            Some(id.public_id)
+            Some(&id.public_id)
         } else {
             None
         }
     }
 
-    pub fn private_id(&self) -> Option<&'r str> {
+    pub fn private_id(&self) -> Option<&str> {
         if let Some(id) = &self.agent_id {
-            Some(id.private_key)
+            Some(&id.private_key)
         } else {
             None
         }

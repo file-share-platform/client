@@ -1,12 +1,15 @@
 [package]
 name = "database"
 version = "0.1.0"
+authors = ["Josiah Bull <josiah.bull7@gmail.com>"]
 edition = "2021"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-ws-com-framework= { git="https://github.com/file-share-platform/ws-com-framework", default-features = false, rev= "550d7fe" }
-diesel = { version = "1.4.8", default-features = false, features = ["chrono", "sqlite"] }
+ws-com-framework= { git="https://github.com/file-share-platform/ws-com-framework", default-features = false, rev= "7260559" }
 config = { path = "../config" }
+
+diesel = { version = "1.4.8", default-features = false, features = ["chrono", "sqlite"] }
+diesel_migrations = "1.4.0"
 chrono = { version = "0.4" }
