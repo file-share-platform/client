@@ -1,7 +1,7 @@
 <!-- TODO: Add badges here -->
 # Riptide Client
 # Overview
-This repo contains client side applications for the riptide file transfer application. The clientside is made up of two main components the Agent and the Cli discussed below.
+This repo contains client side applications for the riptide file transfer application. The clientside is made up of two main components the Agent and the Cli.
 
 ## Agent
 

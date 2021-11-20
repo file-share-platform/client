@@ -117,7 +117,7 @@ fn create_share(args: &ArgMatches<'_>, config: &Config) -> Result<Share, IoError
     //TODO do this only *after* the file has been succesfully added to the database
     hard_link(
         &input_file,
-        format!("{}/hard_links/{}", config.file_store_location(), id),
+        format!("{}/{}", config.file_store_location().to_string_lossy(), id),
     )?;
 
     //TODO
@@ -166,8 +166,13 @@ fn try_save_to_database(share: &Share) -> Result<(), Box<dyn Error>> {
 /// Generate the url to the file, which may be shared to another user to allow
 /// them to download your file.
 fn generate_link_url(share: &Share, config: &Config) -> String {
-    let public_id = config.public_id().unwrap(); //TODO
-    format!("{}/{}/{}", config.server_address(), public_id, String::from_utf8_lossy(&share.id))
+    let public_id = String::from_utf8_lossy(config.public_id());
+    format!(
+        "{}/{}/{}",
+        config.server_address(),
+        public_id,
+        String::from_utf8_lossy(&share.id)
+    )
 }
 
 // fn save_to_clipboard(data: &str) -> Result<(), Box<dyn Error>> {

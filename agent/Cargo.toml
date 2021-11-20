@@ -9,16 +9,14 @@ edition = "2021"
 [dependencies]
 ws-com-framework = { git="https://github.com/file-share-platform/ws-com-framework", default-features = false, features = ["client", "wrapper-tungstenite"], rev="7260559" }
 database = { path = "../database" }
-config = { path = "../config" }
+config = { path = "../config", default-features = false, features = ["async"] }
 
 tokio = { version = "1", features = ["full"] }
 tokio-util = { version = "0.6.8", features = ["codec"] }
 tokio-stream = "0.1.7"
 tokio-tungstenite = { version = "0.15.0", features = ["rustls-tls"] }
 
-reqwest = { version = "0.11.4", features = ["stream", "json"] }
-
-dirs = "4.0.0"
+reqwest = { version = "0.11.4", default-features = false, features = ["stream"] }
 
 futures-util = "0.3.17"
 futures = "0.3.17"

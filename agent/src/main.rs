@@ -20,7 +20,7 @@ mod error;
 
 use std::sync::Arc;
 
-use config::{Config, Id};
+use config::Config;
 use database::{establish_connection, find_share_by_id};
 use error::Error;
 use futures::StreamExt;
@@ -73,12 +73,10 @@ fn file_to_body(f: tokio::fs::File) -> reqwest::Body {
 }
 
 /// Self contained function to upload files to the server
-async fn upload_file(metadata: File, config: Arc<Config<'static>>, url: &str) {
-    let loc = format!(
-        "{}/hard_links/{}",
-        config.file_store_location(),
-        String::from_utf8_lossy(&metadata.id)
-    );
+async fn upload_file(metadata: File, config: Arc<Config>, url: &str) {
+    let loc =
+        (*config.file_store_location()).join(String::from_utf8_lossy(&metadata.id).to_string());
+
     let mut a = 0;
     loop {
         let f = fs::File::open(&loc)
@@ -105,7 +103,7 @@ async fn upload_file(metadata: File, config: Arc<Config<'static>>, url: &str) {
 
 async fn handle_message(
     m: Message,
-    config: Arc<Config<'static>>,
+    config: Arc<Config>,
 ) -> Result<Option<Message>, Box<dyn std::error::Error>> {
     match m {
         Message::UploadRequest(u) => {
@@ -121,16 +119,13 @@ async fn handle_message(
         Message::MetadataRequest(r) => {
             let conn = establish_connection()?;
             if let Some(f) = find_share_by_id(&conn, &r.id)? {
-                okie!(Message::MetadataResponse(Upload::new(
-                    r.url,
-                    f,
-                )))
+                okie!(Message::MetadataResponse(Upload::new(r.url, f,)))
             }
             okie!(ws_com_framework::Error::FileDoesntExist)
         }
         Message::AuthReq => {
             okie!(Message::AuthResponse(ws_com_framework::AuthKey {
-                key: config.private_id().unwrap().as_bytes().try_into().unwrap() //HACK
+                key: *config.private_key()
             }))
         }
         e => {
@@ -143,10 +138,10 @@ async fn handle_message(
 async fn handle_ws<F, R, S, Fut>(
     handle: F,
     (mut tx_ws, mut rx_ws): (Sender<S>, Receiver<R>),
-    config: Arc<Config<'static>>,
+    config: Arc<Config>,
 ) -> Result<(), ()>
 where
-    F: Fn(Message, Arc<Config<'static>>) -> Fut + Send + Sync + 'static + Copy,
+    F: Fn(Message, Arc<Config>) -> Fut + Send + Sync + 'static + Copy,
     R: ws_com_framework::RxStream,
     S: ws_com_framework::TxStream + Send + 'static,
     Fut: std::future::Future<Output = Result<Option<Message>, Box<dyn std::error::Error>>> + Send,
@@ -246,50 +241,16 @@ async fn connect_sever(
     Ok((Receiver::new(tx), Sender::new(rx)))
 }
 
-/// We call to this in the event that we are not registered yet.
-async fn register_server(ip: String) -> Result<Id, Error> {
-    debug!("Attempting to register websocket with At IP {}", ip);
-
-    let response = reqwest::Client::new()
-        .post(&ip)
-        .send()
-        .await?
-        .json::<Id>()
-        .await?;
-
-    Ok(response)
-}
-
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     debug!("Starting...");
-    let mut config: Config<'static> = Config::load_config()?;
-
-    // Register websocket if not registered
-    if config.public_id().is_none() {
-        let ip = format!("{}/client/ws-register", config.server_address());
-
-        let id: Id = match register_server(ip).await {
-            Ok(f) => f,
-            Err(e) => panic!("Failed to register websocket {:?}", e),
-        };
-
-        config.set_id(id);
-
-        //SAFETY: We set the id above, so this should never panic
-        debug!(
-            "Registered websocket with id {}",
-            config.public_id().unwrap()
-        );
-    }
-
-    let config = Arc::new(config);
+    let config = Arc::new(Config::load_config_async().await?);
 
     loop {
         let ip = format!(
             "{}/client/ws/{}",
             config.websocket_address(),
-            config.public_id().unwrap()
+            String::from_utf8_lossy(config.public_id())
         );
 
         let (rx, tx) = match connect_sever(&ip).await {
@@ -319,7 +280,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 #[cfg(test)]
 mod websocket_tests {
-    use super::{connect_sever, handle_ws, register_server, Config};
+    use super::{connect_sever, handle_ws, Config};
     use futures::{FutureExt, SinkExt, StreamExt};
     use std::{sync::Arc, time::Duration};
     use tokio::sync::oneshot;
@@ -357,33 +318,6 @@ mod websocket_tests {
         Ok(tx)
     }
 
-    /// Create a simple webserver which parses some basic http requests.
-    fn create_http_server(ip: ([u8; 4], u16)) -> Result<oneshot::Sender<()>, ()> {
-        let register = warp::post()
-            .and(warp::path("test-register"))
-            .and(warp::path::end())
-            .map(|| {
-                format!(
-                    "
-                    {{
-                        \"public_id\": \"7N58aK\", 
-                        \"private_key\": \"oVZBbqJm5vXCmfTP8wQA0n13FeKd5Ego\"
-                    }}"
-                )
-            });
-
-        let routes = register;
-
-        let (tx, rx) = oneshot::channel();
-        let (_, server) = warp::serve(routes).bind_with_graceful_shutdown(ip, async {
-            rx.await.ok();
-        });
-
-        tokio::task::spawn(server);
-
-        Ok(tx)
-    }
-
     /// Test that websocket is able to succesfully connect to a provided server, and send a simple message
     /// Will timeout and fail anyway after 10 seconds - this usually indicates the test has failed.
     #[tokio::test(flavor = "multi_thread")]
@@ -410,7 +344,7 @@ mod websocket_tests {
     #[tokio::test(flavor = "multi_thread", worker_threads = 5)]
     async fn websocket_handle() {
         timeout(Duration::from_millis(5000), async {
-            let cfg = Arc::new(Config::load_config().unwrap());
+            let cfg = Arc::new(Config::load_config_async().await.unwrap());
 
             let close_server_tx = create_websocket_server(([127, 0, 0, 1], 2031)).unwrap();
 
@@ -426,7 +360,7 @@ mod websocket_tests {
             //This function should process the messages we sent (to ensure they're all getting through)
             async fn handle(
                 m: Message,
-                _: Arc<Config<'static>>,
+                _: Arc<Config>,
             ) -> Result<Option<Message>, Box<dyn std::error::Error>> {
                 match m.clone() {
                     Message::Message(t) => {
@@ -448,25 +382,5 @@ mod websocket_tests {
         })
         .await
         .expect("Test failed due to timeout!");
-    }
-
-    #[tokio::test(flavor = "multi_thread")]
-    async fn test_register() {
-        let close_server_tx = create_http_server(([127, 0, 0, 1], 2034)).unwrap();
-
-        let res = register_server("http://127.0.0.1:2034/test-register".into())
-            .await
-            .unwrap();
-
-        let mut cfg = Config::load_config().unwrap();
-        cfg.set_id(res);
-
-        assert_eq!(cfg.public_id().unwrap(), "7N58aK");
-        assert_eq!(
-            cfg.private_id().unwrap(),
-            "oVZBbqJm5vXCmfTP8wQA0n13FeKd5Ego"
-        );
-
-        let _ = close_server_tx.send(());
     }
 }

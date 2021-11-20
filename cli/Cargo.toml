@@ -9,7 +9,7 @@ edition = "2021"
 [dependencies]
 utils = { git = "https://github.com/file-share-platform/utils", default-features = false, features = ["hex"]}
 ws-com-framework = { git="https://github.com/file-share-platform/ws-com-framework", default-features = false, rev= "7260559" }
-config = { path = "../config" }
+config = { path = "../config", features = ["sync"] }
 database = { path = "../database" }
 
 clap = "2.33.3"
