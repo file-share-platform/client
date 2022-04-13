@@ -21,11 +21,21 @@ mod error;
 use config::Config;
 use database::{establish_connection, find_share_by_id, Share};
 use error::AgentError;
-use futures::{StreamExt, SinkExt};
+use futures::{SinkExt, StreamExt};
+use log::{debug, error, info, warn};
 use tokio::{fs, net::TcpStream};
-use tokio_tungstenite::{WebSocketStream, MaybeTlsStream, tungstenite::Message as TungsteniteMessage};
-use ws_com_framework::{Message, error::{EndOfConnection, ErrorKind}, message::ShareMetadata};
-use log::{error, debug, warn, info};
+use tokio_tungstenite::{
+    tungstenite::{
+        protocol::WebSocketConfig,
+        Message as TungsteniteMessage,
+    },
+    MaybeTlsStream, WebSocketStream,
+};
+use ws_com_framework::{
+    error::{EndOfConnection, ErrorKind},
+    message::ShareMetadata,
+    Message,
+};
 
 const MIN_RECONNECT_DELAY: usize = 5000;
 
@@ -62,35 +72,32 @@ async fn upload_file(metadata: Share, config: &Config, url: &str) {
     debug!("File {} uploaded to: {}", metadata.file_name, url);
 }
 
-async fn handle_message(
-    m: Message,
-    config: &Config,
-) -> Result<Option<Message>, AgentError> {
+async fn handle_message(m: Message, config: &Config) -> Result<Option<Message>, AgentError> {
     match m {
         Message::UploadTo(file_id, ref url) => {
-            let item = tokio::task::spawn_blocking(move || {
-                match establish_connection() {
-                    Ok(conn) =>
-                        find_share_by_id(&conn, &file_id),
-                    Err(e) => Err(e.into()),
-                }
-            }).await??;
+            let item = tokio::task::spawn_blocking(move || match establish_connection() {
+                Ok(conn) => find_share_by_id(&conn, &file_id),
+                Err(e) => Err(e.into()),
+            })
+            .await??;
 
             if let Some(f) = item {
                 upload_file(f, config, url).await;
                 Ok(None)
             } else {
-                Ok(Some(Message::Error(None, EndOfConnection::Continue, ErrorKind::FileDoesntExist)))
+                Ok(Some(Message::Error(
+                    None,
+                    EndOfConnection::Continue,
+                    ErrorKind::FileDoesntExist,
+                )))
             }
         }
         Message::MetadataReq(file_id) => {
-            let item = tokio::task::spawn_blocking(move || {
-                match establish_connection() {
-                    Ok(conn) =>
-                        find_share_by_id(&conn, &file_id),
-                    Err(e) => Err(e.into()),
-                }
-            }).await??;
+            let item = tokio::task::spawn_blocking(move || match establish_connection() {
+                Ok(conn) => find_share_by_id(&conn, &file_id),
+                Err(e) => Err(e.into()),
+            })
+            .await??;
 
             if let Some(f) = item {
                 Ok(Some(Message::MetadataRes(ShareMetadata {
@@ -102,10 +109,17 @@ async fn handle_message(
                     file_name: f.file_name,
                 })))
             } else {
-                Ok(Some(Message::Error(None, EndOfConnection::Continue, ErrorKind::FileDoesntExist)))
+                Ok(Some(Message::Error(
+                    None,
+                    EndOfConnection::Continue,
+                    ErrorKind::FileDoesntExist,
+                )))
             }
         }
-        Message::AuthReq(pub_id) => Ok(Some(Message::AuthRes(pub_id, config.private_key().to_vec()))),
+        Message::AuthReq(pub_id) => Ok(Some(Message::AuthRes(
+            pub_id,
+            config.private_key().to_vec(),
+        ))),
         e => {
             error!("Unsupported message, recieved! {:?}", e);
             Ok(None)
@@ -113,8 +127,11 @@ async fn handle_message(
     }
 }
 
-async fn handle_ws(config: &Config, mut websocket: WebSocketStream<MaybeTlsStream<TcpStream>>) -> Result<(), AgentError> {
-    let mut res = Ok(());
+async fn handle_ws(
+    config: &Config,
+    mut websocket: WebSocketStream<MaybeTlsStream<TcpStream>>,
+) -> Result<bool, AgentError> {
+    let mut res = Ok(false);
     loop {
         //Loop to get messages
         match websocket.next().await {
@@ -124,7 +141,7 @@ async fn handle_ws(config: &Config, mut websocket: WebSocketStream<MaybeTlsStrea
                     Err(e) => {
                         res = Err(e.into());
                         break;
-                    },
+                    }
                 };
 
                 match handle_message(msg, config).await {
@@ -134,53 +151,53 @@ async fn handle_ws(config: &Config, mut websocket: WebSocketStream<MaybeTlsStrea
                             Err(e) => {
                                 res = Err(e.into());
                                 break;
-                            },
+                            }
                         };
                         if let Err(e) = websocket.send(TungsteniteMessage::Binary(bin)).await {
                             res = Err(e.into());
                             break;
                         }
-                    },
+                    }
                     Ok(None) => {}
                     Err(e) => {
                         res = Err(e);
                         break;
-                    },
+                    }
                 }
-            },
+            }
             Some(Ok(TungsteniteMessage::Ping(msg))) => {
                 if let Err(e) = websocket.send(TungsteniteMessage::Pong(msg)).await {
                     res = Err(e.into());
                     break;
                 }
-            },
+            }
             Some(Ok(TungsteniteMessage::Pong(_))) => {
                 warn!("Agent was ponged? Should not happen.");
                 break;
-            },
+            }
             Some(Ok(TungsteniteMessage::Text(msg))) => {
                 warn!("recieved text message from server: {}", msg)
-            },
-            Some(Ok(TungsteniteMessage::Close(_))) => {
-                info!("got close message from server");
+            }
+            Some(Ok(TungsteniteMessage::Close(e))) => {
+                info!("got close message from server message: {:?}", e);
+                res = Ok(false); //XXX: should we try to reconnect?
                 break;
-            },
+            }
+            Some(Ok(TungsteniteMessage::Frame(_))) => {
+                error!("recieved raw frame");
+                res = Err(AgentError::BadFrame(String::from("got raw frame")));
+                break;
+            }
             Some(Err(e)) => {
                 res = Err(e.into());
                 break;
-            },
+            }
             None => break,
         }
     }
 
-    if let Err(e) = res {
-
-        websocket.close(None).await?;
-        Err(e)
-    } else {
-        websocket.close(None).await?;
-        Ok(())
-    }
+    websocket.close(None).await?;
+    res
 }
 
 #[tokio::main]
@@ -190,20 +207,27 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     debug!("Starting...");
     let config = Config::load_config_async().await?;
 
-    let ip = format!(
-        "{}/ws/{}",
-        config.websocket_address(),
-        config.public_id()
-    );
+    let ip = format!("{}/ws/{}", config.websocket_address(), config.public_id());
 
     loop {
-        //XXX: Do we need to handle the response here?
-        match tokio_tungstenite::connect_async(&ip).await {
-            Ok((t, _r)) =>  {
-                handle_ws(&config, t)
-                    .await
-                    .expect("Not Implemented"); //TODO
-            },
+        match tokio_tungstenite::connect_async_tls_with_config(
+            &ip,
+            Some(WebSocketConfig {
+                max_send_queue: None,
+                max_message_size: Some(16 << 20),
+                max_frame_size: Some(2 << 20),
+                accept_unmasked_frames: false,
+            }),
+            None,
+        )
+        .await
+        {
+            Ok((t, _r)) => {
+                if let Err(e) = handle_ws(&config, t).await {
+                    error!("error occured when handling websocket {}", e);
+                    break;
+                }
+            }
             Err(e) => {
                 error!("Failed to connect to webserver {:?}", e);
                 continue;
@@ -217,8 +241,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .await;
     }
 
-    //TODO Implement a ctrl+c catch to close
-
-    // debug!("Connection closed, Server Agent exiting....");
-    std::process::exit(0);
+    debug!("Connection closed, Server Agent exiting....");
+    Ok(())
 }

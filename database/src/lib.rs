@@ -18,14 +18,18 @@ pub use crate::models::Share;
 
 embed_migrations!("./migrations/");
 
-pub fn establish_connection() -> Result<SqliteConnection, Box<dyn std::error::Error + Send + Sync + 'static>> {
+pub fn establish_connection(
+) -> Result<SqliteConnection, Box<dyn std::error::Error + Send + Sync + 'static>> {
     let database_url = "database.db";
     let conn = SqliteConnection::establish(database_url)?;
     embedded_migrations::run(&conn)?;
     Ok(conn)
 }
 
-pub fn insert_share(conn: &SqliteConnection, share: &Share) -> Result<(), Box<dyn std::error::Error + Send + Sync + 'static>> {
+pub fn insert_share(
+    conn: &SqliteConnection,
+    share: &Share,
+) -> Result<(), Box<dyn std::error::Error + Send + Sync + 'static>> {
     use schema::shares;
 
     diesel::insert_into(shares::table)

@@ -7,6 +7,7 @@ pub enum AgentError {
     JoinError(JoinError),
     TokioError(tokio_tungstenite::tungstenite::Error),
     FrameworkError(ws_com_framework::Error),
+    BadFrame(String),
     Other(Box<dyn std::error::Error + 'static + Send + Sync>),
 }
 
@@ -51,12 +52,15 @@ impl std::fmt::Display for AgentError {
         match self {
             AgentError::ReadFile(e) => write!(f, "Unable to read file: {}", e),
             AgentError::Http(e) => write!(f, "Unable to establish http connection: {}", e),
-            AgentError::JoinError(e) => write!(f, "Unable to join process, should never happen: {}", e),
+            AgentError::JoinError(e) => {
+                write!(f, "Unable to join process, should never happen: {}", e)
+            }
             AgentError::Other(e) => write!(f, "Unknown: {}", e),
             AgentError::TokioError(e) => write!(f, "tokio error occured: {}", e),
             AgentError::FrameworkError(e) => write!(f, "erorr occured in framework: {}", e),
+            AgentError::BadFrame(e) => write!(f, "program got a bad or unexpected ws frame: {}", e),
         }
     }
 }
 
-impl std::error::Error for AgentError { }
+impl std::error::Error for AgentError {}

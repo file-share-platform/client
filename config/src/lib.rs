@@ -12,10 +12,10 @@ pub struct Config {
     websocket_address: String,
     server_address: String,
     file_store_location: PathBuf,
-    max_upload_attempts: usize,
-    size_limit_bytes: usize,
-    default_share_time_hours: usize,
-    reconnect_delay_minutes: usize,
+    max_upload_attempts: u64,
+    size_limit_bytes: u64,
+    default_share_time_hours: u64,
+    reconnect_delay_minutes: u64,
 }
 
 /// Information required to connect to central api
@@ -104,13 +104,19 @@ fn register_server<'a>(ip: String) -> Result<Id, ConfigError> {
     let response = Client::new()
         .post(&ip)
         .send()
-            .map_err(|e| {
-                ConfigError::new(ErrorKind::NetworkError(e), "Failed to contact server due to error")
-            })?
+        .map_err(|e| {
+            ConfigError::new(
+                ErrorKind::NetworkError(e),
+                "Failed to contact server due to error",
+            )
+        })?
         .json::<Id>()
-            .map_err(|e| {
-                ConfigError::new(ErrorKind::NetworkError(e), "Failed to parse network response to json")
-            })?;
+        .map_err(|e| {
+            ConfigError::new(
+                ErrorKind::NetworkError(e),
+                "Failed to parse network response to json",
+            )
+        })?;
 
     Ok(response)
 }
@@ -150,12 +156,12 @@ impl<'r> Config {
         let websocket_address = load_env::<String, Infallible>("websocket_address", &config_path)?;
         let server_address = load_env::<String, Infallible>("server_address", &config_path)?;
         let max_upload_attempts =
-            load_env::<usize, ParseIntError>("max_upload_attempts", &config_path)?;
-        let size_limit_bytes = load_env::<usize, ParseIntError>("size_limit_bytes", &config_path)?;
+            load_env::<u64, ParseIntError>("max_upload_attempts", &config_path)?;
+        let size_limit_bytes = load_env::<u64, ParseIntError>("size_limit_bytes", &config_path)?;
         let default_share_time_hours =
-            load_env::<usize, ParseIntError>("default_share_time_hours", &config_path)?;
+            load_env::<u64, ParseIntError>("default_share_time_hours", &config_path)?;
         let reconnect_delay_minutes =
-            load_env::<usize, ParseIntError>("reconnect_delay_minutes", &config_path)?;
+            load_env::<u64, ParseIntError>("reconnect_delay_minutes", &config_path)?;
 
         //Acquire public/private key pair
         let agent_id = {
@@ -263,19 +269,19 @@ impl<'r> Config {
         &self.file_store_location
     }
 
-    pub fn max_upload_attempts(&self) -> usize {
+    pub fn max_upload_attempts(&self) -> u64 {
         self.max_upload_attempts
     }
 
-    pub fn size_limit(&self) -> usize {
+    pub fn size_limit(&self) -> u64 {
         self.size_limit_bytes
     }
 
-    pub fn default_share_time_hours(&self) -> usize {
+    pub fn default_share_time_hours(&self) -> u64 {
         self.default_share_time_hours
     }
 
-    pub fn reconnect_delay_minutes(&self) -> usize {
+    pub fn reconnect_delay_minutes(&self) -> u64 {
         self.reconnect_delay_minutes
     }
 }
@@ -290,9 +296,9 @@ impl<'r> Config {
 #[cfg(feature = "async")]
 impl<'r> Config {
     pub async fn load_config_async() -> Result<Config, ConfigError> {
-        tokio::task::spawn_blocking(|| {
-            Config::__load_config()
-        }).await.unwrap()
+        tokio::task::spawn_blocking(|| Config::__load_config())
+            .await
+            .unwrap()
     }
 }
 
@@ -337,7 +343,10 @@ mod tests {
 
         let res = tokio::task::spawn_blocking(|| {
             register_server("http://127.0.0.1:8001/test-register".into())
-        }).await.unwrap().unwrap();
+        })
+        .await
+        .unwrap()
+        .unwrap();
 
         assert_eq!(res.public_id, 16024170730851851829);
         assert_eq!(res.passcode, "tHQDrCd3XLcJt9LsomWIwry8uMcuUJtV");

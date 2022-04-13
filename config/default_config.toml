@@ -1,5 +1,6 @@
-websocket_address = "ws://localhost:8000/api/v1"
-server_address = "http://localhost:8000/api/v1"
+websocket_address = "wss://localhost:8080"
+server_address = "https://localhost:8080"
+database_location = "${CONFIG_DIR}/riptide/shares.db"
 file_store_location = "${CONFIG_DIR}/riptide/hard_links"
 max_upload_attempts = 10
 size_limit_bytes = 2147483648

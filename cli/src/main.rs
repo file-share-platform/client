@@ -10,11 +10,19 @@
 //! - `--list`, lists all currently shared files
 //! - `--time`, sets the amount of time (in hours) that the file should remain shared.
 
+//TODO: Support encryption/passwords
+//TODO: Support uploading files rather than streaming
+//TODO: Support sending a directory by compressing into an archive
+
 use chrono::{Duration, Utc};
-use clap::ArgMatches;
-use clap::{App, Arg};
+
+use clap::Parser;
+
 use config::Config;
 use database::{establish_connection, insert_share, Share};
+use human_panic::setup_panic;
+use lazy_static::lazy_static;
+use log::warn;
 use std::env;
 use std::error::Error;
 use std::fs::hard_link;
@@ -22,52 +30,39 @@ use std::io::Error as IoError;
 use std::io::ErrorKind::{self};
 use std::path::PathBuf;
 
-/// Load all provided arguments from the user.
-fn get_args() -> ArgMatches<'static> {
-    //TODO pull this from yaml
-    //TODO change this to allow `riptide share <file>`, rather than `riptide --file <file>`
-    App::new("RipTide")
-        .version(env!("CARGO_PKG_VERSION"))
-        .author("Josiah Bull <Josiah.Bull7@gmail.com>")
-        .arg(
-            Arg::with_name("file")
-                .short("f")
-                .long("file")
-                .takes_value(true)
-                .required(true)
-                .help("Sets the file to share."),
-        )
-        .arg(
-            Arg::with_name("list")
-                .short("l")
-                .long("list")
-                .takes_value(false)
-                .help("lists all currently shared files"),
-        )
-        .arg(
-            Arg::with_name("time")
-                .short("t")
-                .long("time")
-                .takes_value(true)
-                .help("sets the amount of time (in hours) that the file should remain shared."),
-        )
-        .arg(
-            Arg::with_name("remove")
-                .short("r")
-                .long("remove")
-                .takes_value(true)
-                .help("removes the share of the provided file"),
-        )
-        .get_matches()
+lazy_static! {
+    static ref CONFIG: Config = Config::load_config().expect("a valid config file"); //XXX: handle error gracefully?
+    static ref ARGS: Args = Args::parse();
+    static ref DEFAULT_SHARE_TIME: i64 = CONFIG.default_share_time_hours() as i64;
+}
+
+/// Self host and share a file over the internet quickly and easily.
+#[derive(Debug, Parser)]
+#[clap(author, version, about, long_about = None)]
+struct Args {
+    /// Name of the file to share
+    //TODO: accept wild cards
+    file: String,
+
+    /// Remove the file share indicated by this id by index or id
+    #[clap(short, long)]
+    remove: bool,
+
+    /// List all currently shared files
+    #[clap(short, long)]
+    list: bool,
+
+    /// Set how many hours to share the file for
+    #[clap(short, long, default_value_t=*DEFAULT_SHARE_TIME)]
+    time: i64,
 }
 
 /// Collect the current path of where the share may be.
 /// Returns a PathBuf to a file. If the file does not exist, or the path is invalid
 /// returns an IoError.
-fn get_file_path(args: &ArgMatches<'_>) -> Result<PathBuf, IoError> {
+fn get_file_path() -> Result<PathBuf, IoError> {
     let dir = env::current_dir()?;
-    let name = args.value_of("file").unwrap(); //SAFETY: This is required in get_args(), therefore we know it's there and valid.
-    let path = dir.join(name);
+    let path = dir.join(&ARGS.file);
 
     if !path.exists() {
         return Err(IoError::new(
@@ -84,8 +79,8 @@ fn get_file_path(args: &ArgMatches<'_>) -> Result<PathBuf, IoError> {
 }
 
 /// Create a share from provided arguments and configuration.
-fn create_share(args: &ArgMatches<'_>, config: &Config) -> Result<Share, IoError> {
-    let input_file = get_file_path(args)?;
+fn create_share() -> Result<Share, IoError> {
+    let input_file = get_file_path()?;
 
     let name = match input_file.file_name() {
         Some(n) => n,
@@ -102,22 +97,13 @@ fn create_share(args: &ArgMatches<'_>, config: &Config) -> Result<Share, IoError
     //XXX update this to get_random_base_62();
     let id = format!("{}", 125); //TODO: generate ids?
 
-
     //Create a hardlink to the file
     hard_link(
         &input_file,
-        format!("{}/{}", config.file_store_location().to_string_lossy(), id),
+        format!("{}/{}", CONFIG.file_store_location().to_string_lossy(), id),
     )?;
 
-    let exp;
-    if let Some(share_time) = args.value_of("time") {
-        let time = share_time
-            .parse::<u64>() //XXX: should we emit a specific error for non-negative time?
-            .expect("Please enter a valid share time!");
-        exp = Utc::now() + Duration::seconds((time * 60 * 60) as i64);
-    } else {
-        exp = Utc::now() + Duration::seconds((config.default_share_time_hours() * 60 * 60) as i64);
-    }
+    let exp = Utc::now() + Duration::hours(ARGS.time);
 
     Ok(Share {
         file_id: id.parse().unwrap(),
@@ -131,9 +117,9 @@ fn create_share(args: &ArgMatches<'_>, config: &Config) -> Result<Share, IoError
 
 /// Generate warnings or conflicts that may exist with the given
 /// configuration and sharing settings.
-fn generate_warnings(share: &Share, config: &Config) -> Vec<&'static str> {
+fn generate_warnings(share: &Share) -> Vec<&'static str> {
     let mut warnings = vec![];
-    if share.file_size as usize > config.size_limit() {
+    if share.file_size as u64 > CONFIG.size_limit() {
         warnings.push("this file is greater than the recommended size limit.");
     }
 
@@ -150,37 +136,45 @@ fn try_save_to_database(share: &Share) -> Result<(), Box<dyn Error + Send + Sync
 
 /// Generate the url to the file, which may be shared to another user to allow
 /// them to download your file.
-fn generate_link_url(share: &Share, config: &Config) -> String {
+fn generate_link_url(share: &Share) -> String {
     format!(
         "{}/{}/{}",
-        config.server_address(),
-        config.public_id(),
+        CONFIG.server_address(),
+        CONFIG.public_id(),
         share.file_id
     )
 }
 
-// fn save_to_clipboard(data: &str) -> Result<(), Box<dyn Error>> {
-//     todo!();
-// }
+fn save_to_clipboard(data: &str) -> Result<(), Box<dyn Error + Send + Sync + 'static>> {
+    // todo!(); //TODO
+    Ok(())
+}
 
-#[doc(hidden)]
-fn main() -> Result<(), Box<dyn Error  + Send + Sync + 'static>> {
-    let args = get_args();
-    let config = Config::load_config()?;
-
-    let share: Share = create_share(&args, &config)?;
+fn handle_share() -> Result<(), Box<dyn Error + Send + Sync + 'static>> {
+    let share: Share = create_share()?;
 
     try_save_to_database(&share)?;
 
-    let link = generate_link_url(&share, &config);
-
-    // save_to_clipboard(&link)?;
-
-    for warning in generate_warnings(&share, &config) {
-        println!("WARN: {}", warning);
+    for warning in generate_warnings(&share) {
+        warn!("{}", warning);
     }
+
+    let link = generate_link_url(&share);
+
+    save_to_clipboard(&link)?;
 
     println!("The file has been shared!");
     println!("The link to your file is {}", &link);
     Ok(())
+}
+
+#[doc(hidden)]
+fn main() {
+    setup_panic!();
+    pretty_env_logger::init();
+
+    match handle_share() {
+        Ok(_) => {}
+        Err(e) => panic!("an error occured: {}", e),
+    }
 }
