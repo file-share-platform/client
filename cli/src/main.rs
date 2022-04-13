@@ -14,17 +14,18 @@ use chrono::{Duration, Utc};
 use clap::ArgMatches;
 use clap::{App, Arg};
 use config::Config;
-use database::{establish_connection, insert_share};
+use database::{establish_connection, insert_share, Share};
 use std::env;
 use std::error::Error;
 use std::fs::hard_link;
 use std::io::Error as IoError;
 use std::io::ErrorKind::{self};
 use std::path::PathBuf;
-use ws_com_framework::File as Share;
 
 /// Load all provided arguments from the user.
 fn get_args() -> ArgMatches<'static> {
+    //TODO pull this from yaml
+    //TODO change this to allow `riptide share <file>`, rather than `riptide --file <file>`
     App::new("RipTide")
         .version(env!("CARGO_PKG_VERSION"))
         .author("Josiah Bull <Josiah.Bull7@gmail.com>")
@@ -33,6 +34,7 @@ fn get_args() -> ArgMatches<'static> {
                 .short("f")
                 .long("file")
                 .takes_value(true)
+                .required(true)
                 .help("Sets the file to share."),
         )
         .arg(
@@ -85,18 +87,7 @@ fn get_file_path(args: &ArgMatches<'_>) -> Result<PathBuf, IoError> {
 fn create_share(args: &ArgMatches<'_>, config: &Config) -> Result<Share, IoError> {
     let input_file = get_file_path(args)?;
 
-    //XXX Note that we could allow files without extensions
-    let ext = match input_file.extension() {
-        Some(f) => f,
-        None => {
-            return Err(IoError::new(
-                ErrorKind::Other,
-                "file does not have extension",
-            ))
-        }
-    };
-
-    let name = match input_file.file_stem() {
+    let name = match input_file.file_name() {
         Some(n) => n,
         None => {
             return Err(IoError::new(
@@ -109,38 +100,32 @@ fn create_share(args: &ArgMatches<'_>, config: &Config) -> Result<Share, IoError
     let size = input_file.metadata()?.len();
 
     //XXX update this to get_random_base_62();
-    let id = utils::hex::get_random_hex(6);
+    let id = format!("{}", 125); //TODO: generate ids?
 
-    let exp = Utc::now() + Duration::seconds((config.default_share_time_hours() * 60 * 60) as i64);
 
     //Create a hardlink to the file
-    //TODO do this only *after* the file has been succesfully added to the database
     hard_link(
         &input_file,
         format!("{}/{}", config.file_store_location().to_string_lossy(), id),
     )?;
 
-    //TODO
-    // if let Some(share_time) = args.value_of("time") {
-    //     let time = share_time
-    //         .parse::<u64>()
-    //         .expect("Please enter a valid share time!");
-    //     share.exp = Utc::now() + Duration::seconds((time * 60 * 60) as i64);
-    // }
+    let exp;
+    if let Some(share_time) = args.value_of("time") {
+        let time = share_time
+            .parse::<u64>() //XXX: should we emit a specific error for non-negative time?
+            .expect("Please enter a valid share time!");
+        exp = Utc::now() + Duration::seconds((time * 60 * 60) as i64);
+    } else {
+        exp = Utc::now() + Duration::seconds((config.default_share_time_hours() * 60 * 60) as i64);
+    }
 
     Ok(Share {
-        id: id.as_bytes().try_into().unwrap(), //SAFETY: We know this will always be 6 bytes, as the length is specified above when we declare id.
-        user: whoami::realname(),
-        exp,
-        crt: Utc::now(),
-        name: name.to_string_lossy().to_string(),
-        size: size as usize,
-        ext: ext.to_string_lossy().to_string(),
-
-        //Note: this type isn't required at this stage.
-        //It is calculated dynamically by the server agent upon request for metadata.
-        //Therefore we can set this to a nonsense value.
-        hash: vec![0; 32].try_into().unwrap(),
+        file_id: id.parse().unwrap(),
+        exp: exp.timestamp(),
+        crt: Utc::now().timestamp(),
+        file_size: size as i64,
+        user_name: whoami::realname(),
+        file_name: name.to_string_lossy().to_string(),
     })
 }
 
@@ -148,7 +133,7 @@ fn create_share(args: &ArgMatches<'_>, config: &Config) -> Result<Share, IoError
 /// configuration and sharing settings.
 fn generate_warnings(share: &Share, config: &Config) -> Vec<&'static str> {
     let mut warnings = vec![];
-    if share.size > config.size_limit() {
+    if share.file_size as usize > config.size_limit() {
         warnings.push("this file is greater than the recommended size limit.");
     }
 
@@ -157,7 +142,7 @@ fn generate_warnings(share: &Share, config: &Config) -> Vec<&'static str> {
 
 /// Attempts to save the share to the database, in the event of failure returns
 /// an error which should be processed.
-fn try_save_to_database(share: &Share) -> Result<(), Box<dyn Error>> {
+fn try_save_to_database(share: &Share) -> Result<(), Box<dyn Error + Send + Sync + 'static>> {
     let conn = establish_connection()?;
     insert_share(&conn, share)?;
     Ok(())
@@ -166,12 +151,11 @@ fn try_save_to_database(share: &Share) -> Result<(), Box<dyn Error>> {
 /// Generate the url to the file, which may be shared to another user to allow
 /// them to download your file.
 fn generate_link_url(share: &Share, config: &Config) -> String {
-    let public_id = String::from_utf8_lossy(config.public_id());
     format!(
         "{}/{}/{}",
         config.server_address(),
-        public_id,
-        String::from_utf8_lossy(&share.id)
+        config.public_id(),
+        share.file_id
     )
 }
 
@@ -180,7 +164,7 @@ fn generate_link_url(share: &Share, config: &Config) -> String {
 // }
 
 #[doc(hidden)]
-fn main() -> Result<(), Box<dyn Error>> {
+fn main() -> Result<(), Box<dyn Error  + Send + Sync + 'static>> {
     let args = get_args();
     let config = Config::load_config()?;
 

@@ -7,8 +7,8 @@ use std::{convert::Infallible, num::ParseIntError, path::PathBuf, str::FromStr};
 
 #[derive(Debug, Clone)]
 pub struct Config {
-    public_id: [u8; 6],
-    private_key: [u8; 32],
+    public_id: u64,
+    private_key: Vec<u8>,
     websocket_address: String,
     server_address: String,
     file_store_location: PathBuf,
@@ -21,8 +21,8 @@ pub struct Config {
 /// Information required to connect to central api
 #[derive(Debug, Clone, Deserialize, Serialize)]
 struct Id {
-    public_id: String,
-    private_key: String,
+    public_id: u64,
+    passcode: String,
 }
 
 /// Opens a toml file, and attempts to load the toml::value as specified in the provided &str.
@@ -176,7 +176,7 @@ impl<'r> Config {
             } else {
                 //Generate new key
                 println!("Api not registered. Attempting to register now....");
-                let ip = format!("{}/client/ws-register", server_address);
+                let ip = format!("{}/register", server_address);
 
                 let id: Id = register_server(ip)?;
                 let data = bincode::serialize(&id).map_err(|e| {
@@ -214,8 +214,8 @@ impl<'r> Config {
         }
 
         let config: Config = Config {
-            public_id: agent_id.public_id.as_bytes().try_into().unwrap(), //HACK
-            private_key: agent_id.private_key.as_bytes().try_into().unwrap(), //HACK
+            public_id: agent_id.public_id,
+            private_key: agent_id.passcode.as_bytes().to_vec(),
             websocket_address,
             server_address,
             file_store_location,
@@ -243,11 +243,11 @@ impl<'r> Config {
     }
 
     //XXX generate these getters using a crate https://docs.rs/getset/0.1.1/getset/index.html
-    pub fn public_id(&self) -> &[u8; 6] {
+    pub fn public_id(&self) -> &u64 {
         &self.public_id
     }
 
-    pub fn private_key(&self) -> &[u8; 32] {
+    pub fn private_key(&self) -> &Vec<u8> {
         &self.private_key
     }
 
@@ -313,8 +313,8 @@ mod tests {
                 format!(
                     "
                     {{
-                        \"public_id\": \"7N58aK\",
-                        \"private_key\": \"oVZBbqJm5vXCmfTP8wQA0n13FeKd5Ego\"
+                        \"public_id\": 16024170730851851829,
+                        \"passcode\": \"tHQDrCd3XLcJt9LsomWIwry8uMcuUJtV\"
                     }}"
                 )
             });
@@ -339,8 +339,8 @@ mod tests {
             register_server("http://127.0.0.1:8001/test-register".into())
         }).await.unwrap().unwrap();
 
-        assert_eq!(&res.public_id, "7N58aK");
-        assert_eq!(&res.private_key, "oVZBbqJm5vXCmfTP8wQA0n13FeKd5Ego");
+        assert_eq!(res.public_id, 16024170730851851829);
+        assert_eq!(res.passcode, "tHQDrCd3XLcJt9LsomWIwry8uMcuUJtV");
 
         let _ = close_server_tx.send(());
     }
