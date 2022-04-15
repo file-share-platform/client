@@ -13,11 +13,14 @@
 //TODO: Support encryption/passwords
 //TODO: Support uploading files rather than streaming
 //TODO: Support sending a directory by compressing into an archive
+//TODO: Support download limiting
+//TODO: Support uploading files with regular syncing (for x hours).
 
 use chrono::{Duration, Utc};
 
 use clap::Parser;
 
+use cli_clipboard::{ClipboardContext, ClipboardProvider};
 use config::Config;
 use database::{establish_connection, insert_share, Share};
 use human_panic::setup_panic;
@@ -129,9 +132,13 @@ fn generate_warnings(share: &Share) -> Vec<&'static str> {
 /// Attempts to save the share to the database, in the event of failure returns
 /// an error which should be processed.
 fn try_save_to_database(share: &Share) -> Result<(), Box<dyn Error + Send + Sync + 'static>> {
-    let conn = establish_connection()?;
-    insert_share(&conn, share)?;
-    Ok(())
+    if let Some(path) = CONFIG.database_location().to_str() {
+        let conn = establish_connection(path)?;
+        insert_share(&conn, share)?;
+        Ok(())
+    } else {
+        Err(Box::new(std::io::Error::new(ErrorKind::NotFound, "unable to find database file, has it been set in config?")))
+    }
 }
 
 /// Generate the url to the file, which may be shared to another user to allow
@@ -146,7 +153,11 @@ fn generate_link_url(share: &Share) -> String {
 }
 
 fn save_to_clipboard(data: &str) -> Result<(), Box<dyn Error + Send + Sync + 'static>> {
-    // todo!(); //TODO
+    let mut ctx = ClipboardContext::new().unwrap();
+    ctx.set_contents(data.to_owned()).unwrap();
+    // note: not sure why, but we need to get the contents of the clipboard to make it "stay"
+    // in the clipboard.
+    assert_eq!(ctx.get_contents().unwrap(), data);
     Ok(())
 }
 
