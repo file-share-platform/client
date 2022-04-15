@@ -19,8 +19,8 @@ pub use crate::models::Share;
 embed_migrations!("./migrations/");
 
 pub fn establish_connection(
+    database_url: &str,
 ) -> Result<SqliteConnection, Box<dyn std::error::Error + Send + Sync + 'static>> {
-    let database_url = "database.db";
     let conn = SqliteConnection::establish(database_url)?;
     embedded_migrations::run(&conn)?;
     Ok(conn)
@@ -51,6 +51,6 @@ pub fn find_share_by_id(
     if f.is_empty() {
         Ok(None)
     } else {
-        Ok(Some(f.remove(0).into()))
+        Ok(Some(f.remove(0)))
     }
 }

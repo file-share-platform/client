@@ -25,10 +25,7 @@ use futures::{SinkExt, StreamExt};
 use log::{debug, error, info, warn};
 use tokio::{fs, net::TcpStream};
 use tokio_tungstenite::{
-    tungstenite::{
-        protocol::WebSocketConfig,
-        Message as TungsteniteMessage,
-    },
+    tungstenite::{protocol::WebSocketConfig, Message as TungsteniteMessage},
     MaybeTlsStream, WebSocketStream,
 };
 use ws_com_framework::{
@@ -73,11 +70,13 @@ async fn upload_file(metadata: Share, config: &Config, url: &str) {
 }
 
 async fn handle_message(m: Message, config: &Config) -> Result<Option<Message>, AgentError> {
+    let database_location = config.database_location().to_string_lossy().to_string();
     match m {
         Message::UploadTo(file_id, ref url) => {
-            let item = tokio::task::spawn_blocking(move || match establish_connection() {
+
+            let item = tokio::task::spawn_blocking(move || match establish_connection(&database_location) {
                 Ok(conn) => find_share_by_id(&conn, &file_id),
-                Err(e) => Err(e.into()),
+                Err(e) => Err(e),
             })
             .await??;
 
@@ -93,9 +92,9 @@ async fn handle_message(m: Message, config: &Config) -> Result<Option<Message>, 
             }
         }
         Message::MetadataReq(file_id) => {
-            let item = tokio::task::spawn_blocking(move || match establish_connection() {
+            let item = tokio::task::spawn_blocking(move || match establish_connection(&database_location) {
                 Ok(conn) => find_share_by_id(&conn, &file_id),
-                Err(e) => Err(e.into()),
+                Err(e) => Err(e),
             })
             .await??;
 

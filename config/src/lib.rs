@@ -12,6 +12,7 @@ pub struct Config {
     websocket_address: String,
     server_address: String,
     file_store_location: PathBuf,
+    database_location: PathBuf,
     max_upload_attempts: u64,
     size_limit_bytes: u64,
     default_share_time_hours: u64,
@@ -26,7 +27,7 @@ struct Id {
 }
 
 /// Opens a toml file, and attempts to load the toml::value as specified in the provided &str.
-fn load_from_toml<'a>(name: &str, path: &PathBuf) -> Result<toml::Value, ConfigError> {
+fn load_from_toml(name: &str, path: &PathBuf) -> Result<toml::Value, ConfigError> {
     let data = std::fs::read_to_string(&path).map_err(|e| {
         ConfigError::new(ErrorKind::IoError(e), "Failed to load configuration file")
     })?;
@@ -100,7 +101,7 @@ where
 }
 
 /// We call to this in the event that we are not registered yet.
-fn register_server<'a>(ip: String) -> Result<Id, ConfigError> {
+fn register_server(ip: String) -> Result<Id, ConfigError> {
     let response = Client::new()
         .post(&ip)
         .send()
@@ -162,6 +163,10 @@ impl<'r> Config {
             load_env::<u64, ParseIntError>("default_share_time_hours", &config_path)?;
         let reconnect_delay_minutes =
             load_env::<u64, ParseIntError>("reconnect_delay_minutes", &config_path)?;
+        let file_store_location: PathBuf =
+            load_env::<PathBuf, Infallible>("file_store_location", &config_path)?;
+        let database_location: PathBuf =
+            load_env::<PathBuf, Infallible>("database_location", &config_path)?;
 
         //Acquire public/private key pair
         let agent_id = {
@@ -204,8 +209,7 @@ impl<'r> Config {
             }
         };
 
-        //Set and validate file_store_location
-        let file_store_location = dir.join("hard_links");
+        //Validate location
         if !file_store_location.exists() {
             return Err(ConfigError::new(
                 ErrorKind::NotFound,
@@ -219,12 +223,32 @@ impl<'r> Config {
             return Err(ConfigError::new(ErrorKind::IsNotDirectory, format!("Hardlinks location is not a directory, please create a directory in this loaction. `{}`", file_store_location.to_string_lossy())));
         }
 
+        if !database_location.exists() {
+            return Err(ConfigError::new(
+                ErrorKind::NotFound,
+                format!(
+                    "database does not exist at `{}`",
+                    database_location.to_string_lossy()
+                ),
+            ));
+        }
+        if !database_location.is_file() {
+            return Err(ConfigError::new(
+                ErrorKind::IsDirectory,
+                format!(
+                    "expected a file, not a directory at `{}`",
+                    database_location.to_string_lossy()
+                ),
+            ));
+        }
+
         let config: Config = Config {
             public_id: agent_id.public_id,
             private_key: agent_id.passcode.as_bytes().to_vec(),
             websocket_address,
             server_address,
             file_store_location,
+            database_location,
             max_upload_attempts,
             size_limit_bytes,
             default_share_time_hours,
@@ -269,6 +293,10 @@ impl<'r> Config {
         &self.file_store_location
     }
 
+    pub fn database_location(&'r self) -> &'r PathBuf {
+        &self.database_location
+    }
+
     pub fn max_upload_attempts(&self) -> u64 {
         self.max_upload_attempts
     }
@@ -296,7 +324,7 @@ impl<'r> Config {
 #[cfg(feature = "async")]
 impl<'r> Config {
     pub async fn load_config_async() -> Result<Config, ConfigError> {
-        tokio::task::spawn_blocking(|| Config::__load_config())
+        tokio::task::spawn_blocking(Config::__load_config)
             .await
             .unwrap()
     }
@@ -305,7 +333,6 @@ impl<'r> Config {
 #[cfg(test)]
 mod tests {
     use tokio::sync::oneshot;
-    use warp;
     use warp::Filter;
 
     use crate::register_server;
@@ -316,12 +343,12 @@ mod tests {
             .and(warp::path("test-register"))
             .and(warp::path::end())
             .map(|| {
-                format!(
+                String::from(
                     "
                     {{
                         \"public_id\": 16024170730851851829,
                         \"passcode\": \"tHQDrCd3XLcJt9LsomWIwry8uMcuUJtV\"
-                    }}"
+                    }}",
                 )
             });
 
