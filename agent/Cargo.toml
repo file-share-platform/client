@@ -7,7 +7,7 @@ edition = "2021"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-ws-com-framework = { path="../../ws-com-framework" }
+ws-com-framework = { git = "https://github.com/file-share-platform/ws-com-framework", rev="53b2f1bc7d070ea77e8a53105e265f44e5ccd1a1" }
 database = { path = "../database" }
 config = { path = "../config", default-features = false, features = ["async"] }
 
@@ -19,7 +19,7 @@ tokio-util = { version = "0.7.1", features = ["codec"] }
 tokio-stream = "0.1.7"
 tokio-tungstenite = { version = "0.17.1", features = ["native-tls"] }
 
-reqwest = { version = "0.11.4", default-features = false, features = ["stream"] }
+reqwest = { version = "0.11.4", default-features = false, features = ["stream", "native-tls"] }
 
 futures-util = "0.3.17"
 futures = "0.3.17"

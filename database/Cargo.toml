@@ -7,7 +7,7 @@ edition = "2021"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-ws-com-framework = { git = "https://github.com/file-share-platform/ws-com-framework" }
+ws-com-framework = { git = "https://github.com/file-share-platform/ws-com-framework", rev="53b2f1bc7d070ea77e8a53105e265f44e5ccd1a1" }
 config = { path = "../config" }
 
 diesel = { version = "1.4.8", default-features = false, features = ["chrono", "sqlite"] }

@@ -29,7 +29,7 @@ use tokio_tungstenite::{
     MaybeTlsStream, WebSocketStream,
 };
 use ws_com_framework::{
-    error::{EndOfConnection, ErrorKind},
+    error::ErrorKind,
     message::ShareMetadata,
     Message,
 };
@@ -51,6 +51,7 @@ async fn upload_file(metadata: Share, config: &Config, url: &str) {
             .await
             .expect("File unexpectedly not available!");
         let res = reqwest::Client::new()
+
             .post(url)
             .body(file_to_body(f))
             .send()
@@ -86,12 +87,11 @@ async fn handle_message(m: Message, config: &Config) -> Result<Option<Message>, 
             } else {
                 Ok(Some(Message::Error(
                     None,
-                    EndOfConnection::Continue,
                     ErrorKind::FileDoesntExist,
                 )))
             }
         }
-        Message::MetadataReq(file_id) => {
+        Message::MetadataReq(file_id, upload_id) => {
             let item = tokio::task::spawn_blocking(move || match establish_connection(&database_location) {
                 Ok(conn) => find_share_by_id(&conn, &file_id),
                 Err(e) => Err(e),
@@ -106,11 +106,10 @@ async fn handle_message(m: Message, config: &Config) -> Result<Option<Message>, 
                     file_size: f.file_size as u64,
                     username: f.user_name,
                     file_name: f.file_name,
-                })))
+                }, upload_id)))
             } else {
                 Ok(Some(Message::Error(
                     None,
-                    EndOfConnection::Continue,
                     ErrorKind::FileDoesntExist,
                 )))
             }
@@ -171,8 +170,7 @@ async fn handle_ws(
                 }
             }
             Some(Ok(TungsteniteMessage::Pong(_))) => {
-                warn!("Agent was ponged? Should not happen.");
-                break;
+                info!("Pong recieved");
             }
             Some(Ok(TungsteniteMessage::Text(msg))) => {
                 warn!("recieved text message from server: {}", msg)
@@ -180,7 +178,6 @@ async fn handle_ws(
             Some(Ok(TungsteniteMessage::Close(e))) => {
                 info!("got close message from server message: {:?}", e);
                 res = Ok(false); //XXX: should we try to reconnect?
-                break;
             }
             Some(Ok(TungsteniteMessage::Frame(_))) => {
                 error!("recieved raw frame");
@@ -223,13 +220,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         {
             Ok((t, _r)) => {
                 if let Err(e) = handle_ws(&config, t).await {
-                    error!("error occured when handling websocket {}", e);
+                    error!("error occured when handling websocket: {}", e);
                     break;
                 }
             }
             Err(e) => {
                 error!("Failed to connect to webserver {:?}", e);
-                continue;
             }
         };
 

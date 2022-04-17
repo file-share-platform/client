@@ -25,7 +25,8 @@ use config::Config;
 use database::{establish_connection, insert_share, Share};
 use human_panic::setup_panic;
 use lazy_static::lazy_static;
-use log::warn;
+use log::{warn, trace};
+use rand::Rng;
 use std::env;
 use std::error::Error;
 use std::fs::hard_link;
@@ -83,8 +84,10 @@ fn get_file_path() -> Result<PathBuf, IoError> {
 
 /// Create a share from provided arguments and configuration.
 fn create_share() -> Result<Share, IoError> {
+    trace!("getting file path");
     let input_file = get_file_path()?;
 
+    trace!("getting file name");
     let name = match input_file.file_name() {
         Some(n) => n,
         None => {
@@ -95,21 +98,24 @@ fn create_share() -> Result<Share, IoError> {
         }
     };
 
+    trace!("getting file size");
     let size = input_file.metadata()?.len();
 
-    //XXX update this to get_random_base_62();
-    let id = format!("{}", 125); //TODO: generate ids?
+    let id: u32 = rand::thread_rng().gen();
 
+    trace!("creating hard_link to file");
     //Create a hardlink to the file
     hard_link(
         &input_file,
         format!("{}/{}", CONFIG.file_store_location().to_string_lossy(), id),
     )?;
 
+    trace!("setting file expiry");
     let exp = Utc::now() + Duration::hours(ARGS.time);
 
+    trace!("completing share creation");
     Ok(Share {
-        file_id: id.parse().unwrap(),
+        file_id: id as i32,
         exp: exp.timestamp(),
         crt: Utc::now().timestamp(),
         file_size: size as i64,
@@ -132,8 +138,12 @@ fn generate_warnings(share: &Share) -> Vec<&'static str> {
 /// Attempts to save the share to the database, in the event of failure returns
 /// an error which should be processed.
 fn try_save_to_database(share: &Share) -> Result<(), Box<dyn Error + Send + Sync + 'static>> {
+    trace!("loading database location");
     if let Some(path) = CONFIG.database_location().to_str() {
+        trace!("database location found as {}\nestablishing database connection", path);
         let conn = establish_connection(path)?;
+
+        trace!("inserting share to database");
         insert_share(&conn, share)?;
         Ok(())
     } else {
@@ -145,10 +155,10 @@ fn try_save_to_database(share: &Share) -> Result<(), Box<dyn Error + Send + Sync
 /// them to download your file.
 fn generate_link_url(share: &Share) -> String {
     format!(
-        "{}/{}/{}",
+        "{}/download/{}/{}",
         CONFIG.server_address(),
         CONFIG.public_id(),
-        share.file_id
+        share.file_id as u32
     )
 }
 
@@ -162,16 +172,21 @@ fn save_to_clipboard(data: &str) -> Result<(), Box<dyn Error + Send + Sync + 'st
 }
 
 fn handle_share() -> Result<(), Box<dyn Error + Send + Sync + 'static>> {
+    trace!("creating share");
     let share: Share = create_share()?;
 
+    trace!("saving share to database");
     try_save_to_database(&share)?;
 
+    trace!("generating warnings");
     for warning in generate_warnings(&share) {
         warn!("{}", warning);
     }
 
+    trace!("generating link url");
     let link = generate_link_url(&share);
 
+    trace!("saving to clipboard");
     save_to_clipboard(&link)?;
 
     println!("The file has been shared!");
