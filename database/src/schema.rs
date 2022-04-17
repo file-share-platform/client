@@ -1,11 +1,10 @@
 table! {
-    shares (id) {
-        id -> Blob,
-        user -> Text,
-        exp -> Timestamp,
-        crt -> Timestamp,
-        name -> Text,
-        size -> Integer,
-        ext -> Text,
+    shares (file_id) {
+        file_id -> Integer,
+        exp -> BigInt,
+        crt -> BigInt,
+        file_size -> BigInt,
+        user_name -> Text,
+        file_name -> Text,
     }
 }

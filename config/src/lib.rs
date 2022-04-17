@@ -7,26 +7,27 @@ use std::{convert::Infallible, num::ParseIntError, path::PathBuf, str::FromStr};
 
 #[derive(Debug, Clone)]
 pub struct Config {
-    public_id: [u8; 6],
-    private_key: [u8; 32],
+    public_id: u64,
+    private_key: Vec<u8>,
     websocket_address: String,
     server_address: String,
     file_store_location: PathBuf,
-    max_upload_attempts: usize,
-    size_limit_bytes: usize,
-    default_share_time_hours: usize,
-    reconnect_delay_minutes: usize,
+    database_location: PathBuf,
+    max_upload_attempts: u64,
+    size_limit_bytes: u64,
+    default_share_time_hours: u64,
+    reconnect_delay_minutes: u64,
 }
 
 /// Information required to connect to central api
 #[derive(Debug, Clone, Deserialize, Serialize)]
 struct Id {
-    public_id: String,
-    private_key: String,
+    public_id: u64,
+    passcode: String,
 }
 
 /// Opens a toml file, and attempts to load the toml::value as specified in the provided &str.
-fn load_from_toml<'a>(name: &str, path: &PathBuf) -> Result<toml::Value, ConfigError> {
+fn load_from_toml(name: &str, path: &PathBuf) -> Result<toml::Value, ConfigError> {
     let data = std::fs::read_to_string(&path).map_err(|e| {
         ConfigError::new(ErrorKind::IoError(e), "Failed to load configuration file")
     })?;
@@ -100,17 +101,23 @@ where
 }
 
 /// We call to this in the event that we are not registered yet.
-fn register_server<'a>(ip: String) -> Result<Id, ConfigError> {
+fn register_server(ip: String) -> Result<Id, ConfigError> {
     let response = Client::new()
         .post(&ip)
         .send()
-            .map_err(|e| {
-                ConfigError::new(ErrorKind::NetworkError(e), "Failed to contact server due to error")
-            })?
+        .map_err(|e| {
+            ConfigError::new(
+                ErrorKind::NetworkError(e),
+                "Failed to contact server due to error",
+            )
+        })?
         .json::<Id>()
-            .map_err(|e| {
-                ConfigError::new(ErrorKind::NetworkError(e), "Failed to parse network response to json")
-            })?;
+        .map_err(|e| {
+            ConfigError::new(
+                ErrorKind::NetworkError(e),
+                "Failed to parse network response to json",
+            )
+        })?;
 
     Ok(response)
 }
@@ -150,12 +157,16 @@ impl<'r> Config {
         let websocket_address = load_env::<String, Infallible>("websocket_address", &config_path)?;
         let server_address = load_env::<String, Infallible>("server_address", &config_path)?;
         let max_upload_attempts =
-            load_env::<usize, ParseIntError>("max_upload_attempts", &config_path)?;
-        let size_limit_bytes = load_env::<usize, ParseIntError>("size_limit_bytes", &config_path)?;
+            load_env::<u64, ParseIntError>("max_upload_attempts", &config_path)?;
+        let size_limit_bytes = load_env::<u64, ParseIntError>("size_limit_bytes", &config_path)?;
         let default_share_time_hours =
-            load_env::<usize, ParseIntError>("default_share_time_hours", &config_path)?;
+            load_env::<u64, ParseIntError>("default_share_time_hours", &config_path)?;
         let reconnect_delay_minutes =
-            load_env::<usize, ParseIntError>("reconnect_delay_minutes", &config_path)?;
+            load_env::<u64, ParseIntError>("reconnect_delay_minutes", &config_path)?;
+        let file_store_location: PathBuf =
+            load_env::<PathBuf, Infallible>("file_store_location", &config_path)?;
+        let database_location: PathBuf =
+            load_env::<PathBuf, Infallible>("database_location", &config_path)?;
 
         //Acquire public/private key pair
         let agent_id = {
@@ -176,7 +187,7 @@ impl<'r> Config {
             } else {
                 //Generate new key
                 println!("Api not registered. Attempting to register now....");
-                let ip = format!("{}/client/ws-register", server_address);
+                let ip = format!("{}/register", server_address);
 
                 let id: Id = register_server(ip)?;
                 let data = bincode::serialize(&id).map_err(|e| {
@@ -198,8 +209,7 @@ impl<'r> Config {
             }
         };
 
-        //Set and validate file_store_location
-        let file_store_location = dir.join("hard_links");
+        //Validate location
         if !file_store_location.exists() {
             return Err(ConfigError::new(
                 ErrorKind::NotFound,
@@ -213,12 +223,32 @@ impl<'r> Config {
             return Err(ConfigError::new(ErrorKind::IsNotDirectory, format!("Hardlinks location is not a directory, please create a directory in this loaction. `{}`", file_store_location.to_string_lossy())));
         }
 
+        if !database_location.exists() {
+            return Err(ConfigError::new(
+                ErrorKind::NotFound,
+                format!(
+                    "database does not exist at `{}`",
+                    database_location.to_string_lossy()
+                ),
+            ));
+        }
+        if !database_location.is_file() {
+            return Err(ConfigError::new(
+                ErrorKind::IsDirectory,
+                format!(
+                    "expected a file, not a directory at `{}`",
+                    database_location.to_string_lossy()
+                ),
+            ));
+        }
+
         let config: Config = Config {
-            public_id: agent_id.public_id.as_bytes().try_into().unwrap(), //HACK
-            private_key: agent_id.private_key.as_bytes().try_into().unwrap(), //HACK
+            public_id: agent_id.public_id,
+            private_key: agent_id.passcode.as_bytes().to_vec(),
             websocket_address,
             server_address,
             file_store_location,
+            database_location,
             max_upload_attempts,
             size_limit_bytes,
             default_share_time_hours,
@@ -243,11 +273,11 @@ impl<'r> Config {
     }
 
     //XXX generate these getters using a crate https://docs.rs/getset/0.1.1/getset/index.html
-    pub fn public_id(&self) -> &[u8; 6] {
+    pub fn public_id(&self) -> &u64 {
         &self.public_id
     }
 
-    pub fn private_key(&self) -> &[u8; 32] {
+    pub fn private_key(&self) -> &Vec<u8> {
         &self.private_key
     }
 
@@ -263,19 +293,23 @@ impl<'r> Config {
         &self.file_store_location
     }
 
-    pub fn max_upload_attempts(&self) -> usize {
+    pub fn database_location(&'r self) -> &'r PathBuf {
+        &self.database_location
+    }
+
+    pub fn max_upload_attempts(&self) -> u64 {
         self.max_upload_attempts
     }
 
-    pub fn size_limit(&self) -> usize {
+    pub fn size_limit(&self) -> u64 {
         self.size_limit_bytes
     }
 
-    pub fn default_share_time_hours(&self) -> usize {
+    pub fn default_share_time_hours(&self) -> u64 {
         self.default_share_time_hours
     }
 
-    pub fn reconnect_delay_minutes(&self) -> usize {
+    pub fn reconnect_delay_minutes(&self) -> u64 {
         self.reconnect_delay_minutes
     }
 }
@@ -290,16 +324,15 @@ impl<'r> Config {
 #[cfg(feature = "async")]
 impl<'r> Config {
     pub async fn load_config_async() -> Result<Config, ConfigError> {
-        tokio::task::spawn_blocking(|| {
-            Config::__load_config()
-        }).await.unwrap()
+        tokio::task::spawn_blocking(Config::__load_config)
+            .await
+            .unwrap()
     }
 }
 
 #[cfg(test)]
 mod tests {
     use tokio::sync::oneshot;
-    use warp;
     use warp::Filter;
 
     use crate::register_server;
@@ -310,12 +343,11 @@ mod tests {
             .and(warp::path("test-register"))
             .and(warp::path::end())
             .map(|| {
-                format!(
-                    "
-                    {{
-                        \"public_id\": \"7N58aK\",
-                        \"private_key\": \"oVZBbqJm5vXCmfTP8wQA0n13FeKd5Ego\"
-                    }}"
+                String::from(
+                    "{
+                        \"public_id\": 16024170730851851829,
+                        \"passcode\": \"tHQDrCd3XLcJt9LsomWIwry8uMcuUJtV\"
+                    }",
                 )
             });
 
@@ -337,10 +369,13 @@ mod tests {
 
         let res = tokio::task::spawn_blocking(|| {
             register_server("http://127.0.0.1:8001/test-register".into())
-        }).await.unwrap().unwrap();
+        })
+        .await
+        .unwrap()
+        .unwrap();
 
-        assert_eq!(&res.public_id, "7N58aK");
-        assert_eq!(&res.private_key, "oVZBbqJm5vXCmfTP8wQA0n13FeKd5Ego");
+        assert_eq!(res.public_id, 16024170730851851829);
+        assert_eq!(res.passcode, "tHQDrCd3XLcJt9LsomWIwry8uMcuUJtV");
 
         let _ = close_server_tx.send(());
     }

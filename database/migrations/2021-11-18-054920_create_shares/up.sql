@@ -1,10 +1,8 @@
-CREATE TABLE shares (
-    id BLOB NOT NULL,
-    user TEXT NOT NULL,
-    exp DATETIME NOT NULL,
-    crt DATETIME NOT NULL,
-    name TEXT NOT NULL,
-    size INTEGER NOT NULL,
-    ext TEXT NOT NULL,
-    PRIMARY KEY (id)
-)
+CREATE TABLE IF NOT EXISTS shares (
+    file_id INTEGER PRIMARY KEY NOT NULL UNIQUE,
+    exp INTEGER NOT NULL,
+    crt INTEGER NOT NULL,
+    file_size INTEGER NOT NULL,
+    user_name TEXT NOT NULL,
+    file_name TEXT NOT NULL
+);

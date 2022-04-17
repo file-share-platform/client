@@ -10,62 +10,63 @@
 //! - `--list`, lists all currently shared files
 //! - `--time`, sets the amount of time (in hours) that the file should remain shared.
 
+//TODO: Support encryption/passwords
+//TODO: Support uploading files rather than streaming
+//TODO: Support sending a directory by compressing into an archive
+//TODO: Support download limiting
+//TODO: Support uploading files with regular syncing (for x hours).
+
 use chrono::{Duration, Utc};
-use clap::ArgMatches;
-use clap::{App, Arg};
+
+use clap::Parser;
+
+use cli_clipboard::{ClipboardContext, ClipboardProvider};
 use config::Config;
-use database::{establish_connection, insert_share};
+use database::{establish_connection, insert_share, Share};
+use human_panic::setup_panic;
+use lazy_static::lazy_static;
+use log::{warn, trace};
+use rand::Rng;
 use std::env;
 use std::error::Error;
 use std::fs::hard_link;
 use std::io::Error as IoError;
 use std::io::ErrorKind::{self};
 use std::path::PathBuf;
-use ws_com_framework::File as Share;
 
-/// Load all provided arguments from the user.
-fn get_args() -> ArgMatches<'static> {
-    App::new("RipTide")
-        .version(env!("CARGO_PKG_VERSION"))
-        .author("Josiah Bull <Josiah.Bull7@gmail.com>")
-        .arg(
-            Arg::with_name("file")
-                .short("f")
-                .long("file")
-                .takes_value(true)
-                .help("Sets the file to share."),
-        )
-        .arg(
-            Arg::with_name("list")
-                .short("l")
-                .long("list")
-                .takes_value(false)
-                .help("lists all currently shared files"),
-        )
-        .arg(
-            Arg::with_name("time")
-                .short("t")
-                .long("time")
-                .takes_value(true)
-                .help("sets the amount of time (in hours) that the file should remain shared."),
-        )
-        .arg(
-            Arg::with_name("remove")
-                .short("r")
-                .long("remove")
-                .takes_value(true)
-                .help("removes the share of the provided file"),
-        )
-        .get_matches()
+lazy_static! {
+    static ref CONFIG: Config = Config::load_config().expect("a valid config file"); //XXX: handle error gracefully?
+    static ref ARGS: Args = Args::parse();
+    static ref DEFAULT_SHARE_TIME: i64 = CONFIG.default_share_time_hours() as i64;
+}
+
+/// Self host and share a file over the internet quickly and easily.
+#[derive(Debug, Parser)]
+#[clap(author, version, about, long_about = None)]
+struct Args {
+    /// Name of the file to share
+    //TODO: accept wild cards
+    file: String,
+
+    /// Remove the file share indicated by this id by index or id
+    #[clap(short, long)]
+    remove: bool,
+
+    /// List all currently shared files
+    #[clap(short, long)]
+    list: bool,
+
+    /// Set how many hours to share the file for
+    #[clap(short, long, default_value_t=*DEFAULT_SHARE_TIME)]
+    time: i64,
 }
 
 /// Collect the current path of where the share may be.
 /// Returns a PathBuf to a file. If the file does not exist, or the path is invalid
 /// returns an IoError.
-fn get_file_path(args: &ArgMatches<'_>) -> Result<PathBuf, IoError> {
+fn get_file_path() -> Result<PathBuf, IoError> {
     let dir = env::current_dir()?;
-    let name = args.value_of("file").unwrap(); //SAFETY: This is required in get_args(), therefore we know it's there and valid.
-    let path = dir.join(name);
+    let path = dir.join(&ARGS.file);
 
     if !path.exists() {
         return Err(IoError::new(
@@ -82,21 +83,12 @@ fn get_file_path(args: &ArgMatches<'_>) -> Result<PathBuf, IoError> {
 }
 
 /// Create a share from provided arguments and configuration.
-fn create_share(args: &ArgMatches<'_>, config: &Config) -> Result<Share, IoError> {
-    let input_file = get_file_path(args)?;
+fn create_share() -> Result<Share, IoError> {
+    trace!("getting file path");
+    let input_file = get_file_path()?;
 
-    //XXX Note that we could allow files without extensions
-    let ext = match input_file.extension() {
-        Some(f) => f,
-        None => {
-            return Err(IoError::new(
-                ErrorKind::Other,
-                "file does not have extension",
-            ))
-        }
-    };
-
-    let name = match input_file.file_stem() {
+    trace!("getting file name");
+    let name = match input_file.file_name() {
         Some(n) => n,
         None => {
             return Err(IoError::new(
@@ -106,49 +98,37 @@ fn create_share(args: &ArgMatches<'_>, config: &Config) -> Result<Share, IoError
         }
     };
 
+    trace!("getting file size");
     let size = input_file.metadata()?.len();
 
-    //XXX update this to get_random_base_62();
-    let id = utils::hex::get_random_hex(6);
+    let id: u32 = rand::thread_rng().gen();
 
-    let exp = Utc::now() + Duration::seconds((config.default_share_time_hours() * 60 * 60) as i64);
-
+    trace!("creating hard_link to file");
     //Create a hardlink to the file
-    //TODO do this only *after* the file has been succesfully added to the database
     hard_link(
         &input_file,
-        format!("{}/{}", config.file_store_location().to_string_lossy(), id),
+        format!("{}/{}", CONFIG.file_store_location().to_string_lossy(), id),
     )?;
 
-    //TODO
-    // if let Some(share_time) = args.value_of("time") {
-    //     let time = share_time
-    //         .parse::<u64>()
-    //         .expect("Please enter a valid share time!");
-    //     share.exp = Utc::now() + Duration::seconds((time * 60 * 60) as i64);
-    // }
+    trace!("setting file expiry");
+    let exp = Utc::now() + Duration::hours(ARGS.time);
 
+    trace!("completing share creation");
     Ok(Share {
-        id: id.as_bytes().try_into().unwrap(), //SAFETY: We know this will always be 6 bytes, as the length is specified above when we declare id.
-        user: whoami::realname(),
-        exp,
-        crt: Utc::now(),
-        name: name.to_string_lossy().to_string(),
-        size: size as usize,
-        ext: ext.to_string_lossy().to_string(),
-
-        //Note: this type isn't required at this stage.
-        //It is calculated dynamically by the server agent upon request for metadata.
-        //Therefore we can set this to a nonsense value.
-        hash: vec![0; 32].try_into().unwrap(),
+        file_id: id as i32,
+        exp: exp.timestamp(),
+        crt: Utc::now().timestamp(),
+        file_size: size as i64,
+        user_name: whoami::realname(),
+        file_name: name.to_string_lossy().to_string(),
     })
 }
 
 /// Generate warnings or conflicts that may exist with the given
 /// configuration and sharing settings.
-fn generate_warnings(share: &Share, config: &Config) -> Vec<&'static str> {
+fn generate_warnings(share: &Share) -> Vec<&'static str> {
     let mut warnings = vec![];
-    if share.size > config.size_limit() {
+    if share.file_size as u64 > CONFIG.size_limit() {
         warnings.push("this file is greater than the recommended size limit.");
     }
 
@@ -157,46 +137,70 @@ fn generate_warnings(share: &Share, config: &Config) -> Vec<&'static str> {
 
 /// Attempts to save the share to the database, in the event of failure returns
 /// an error which should be processed.
-fn try_save_to_database(share: &Share) -> Result<(), Box<dyn Error>> {
-    let conn = establish_connection()?;
-    insert_share(&conn, share)?;
-    Ok(())
+fn try_save_to_database(share: &Share) -> Result<(), Box<dyn Error + Send + Sync + 'static>> {
+    trace!("loading database location");
+    if let Some(path) = CONFIG.database_location().to_str() {
+        trace!("database location found as {}\nestablishing database connection", path);
+        let conn = establish_connection(path)?;
+
+        trace!("inserting share to database");
+        insert_share(&conn, share)?;
+        Ok(())
+    } else {
+        Err(Box::new(std::io::Error::new(ErrorKind::NotFound, "unable to find database file, has it been set in config?")))
+    }
 }
 
 /// Generate the url to the file, which may be shared to another user to allow
 /// them to download your file.
-fn generate_link_url(share: &Share, config: &Config) -> String {
-    let public_id = String::from_utf8_lossy(config.public_id());
+fn generate_link_url(share: &Share) -> String {
     format!(
-        "{}/{}/{}",
-        config.server_address(),
-        public_id,
-        String::from_utf8_lossy(&share.id)
+        "{}/download/{}/{}",
+        CONFIG.server_address(),
+        CONFIG.public_id(),
+        share.file_id as u32
     )
 }
 
-// fn save_to_clipboard(data: &str) -> Result<(), Box<dyn Error>> {
-//     todo!();
-// }
+fn save_to_clipboard(data: &str) -> Result<(), Box<dyn Error + Send + Sync + 'static>> {
+    let mut ctx = ClipboardContext::new().unwrap();
+    ctx.set_contents(data.to_owned()).unwrap();
+    // note: not sure why, but we need to get the contents of the clipboard to make it "stay"
+    // in the clipboard.
+    assert_eq!(ctx.get_contents().unwrap(), data);
+    Ok(())
+}
 
-#[doc(hidden)]
-fn main() -> Result<(), Box<dyn Error>> {
-    let args = get_args();
-    let config = Config::load_config()?;
+fn handle_share() -> Result<(), Box<dyn Error + Send + Sync + 'static>> {
+    trace!("creating share");
+    let share: Share = create_share()?;
 
-    let share: Share = create_share(&args, &config)?;
-
+    trace!("saving share to database");
     try_save_to_database(&share)?;
 
-    let link = generate_link_url(&share, &config);
-
-    // save_to_clipboard(&link)?;
-
-    for warning in generate_warnings(&share, &config) {
-        println!("WARN: {}", warning);
+    trace!("generating warnings");
+    for warning in generate_warnings(&share) {
+        warn!("{}", warning);
     }
+
+    trace!("generating link url");
+    let link = generate_link_url(&share);
+
+    trace!("saving to clipboard");
+    save_to_clipboard(&link)?;
 
     println!("The file has been shared!");
     println!("The link to your file is {}", &link);
     Ok(())
+}
+
+#[doc(hidden)]
+fn main() {
+    setup_panic!();
+    pretty_env_logger::init();
+
+    match handle_share() {
+        Ok(_) => {}
+        Err(e) => panic!("an error occured: {}", e),
+    }
 }
