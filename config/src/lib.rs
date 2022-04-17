@@ -344,11 +344,10 @@ mod tests {
             .and(warp::path::end())
             .map(|| {
                 String::from(
-                    "
-                    {{
+                    "{
                         \"public_id\": 16024170730851851829,
                         \"passcode\": \"tHQDrCd3XLcJt9LsomWIwry8uMcuUJtV\"
-                    }}",
+                    }",
                 )
             });
 

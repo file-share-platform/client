@@ -10,47 +10,16 @@ jobs:
     name: Code Coverage
     runs-on: ubuntu-latest
 
-    services:
-      postgres:
-        image: postgres
-        env:
-          POSTGRES_PASSWORD: postgres
-        # Set health checks to wait until postgres has started
-        options: >-
-          -p 5432:5432
-          --health-cmd pg_isready
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 5
     steps:
       - name: Checkout repository
         uses: actions/checkout@v2
 
-      - name: Setup Database
-        run: | 
-          cargo install diesel_cli --no-default-features --features postgres
-          diesel setup
-        env:
-          DATABASE_URL: postgres://postgres:postgres@localhost/fest_api
-
-      - name: Setup Festival
-        run: | 
-          sudo apt-get update
-          sudo apt-get install festival sox libsox-fmt-mp3 -y
-          wget http://www.festvox.org/packed/festival/2.5/voices/festvox_cmu_us_aew_cg.tar.gz
-          tar -xf festvox_cmu_us_aew_cg.tar.gz
-          sudo mkdir -p /usr/share/festival/voices/us/
-          sudo cp -r festival/lib/voices/us/cmu_us_aew_cg/ /usr/share/festival/voices/us/
 
       - name: Run cargo-tarpaulin
         uses: actions-rs/tarpaulin@v0.1
         with:
           version: '0.15.0'
-          args: '--all -- --test-threads 1'
-        env:
-          ROCKET_DATABASES: '{postgres_database={url=postgres://postgres:postgres@localhost/fest_api}}'
-          JWT_SECRET: nevergonnagiveyouup
-          JWT_EXPIRY_TIME_HOURS: 200
+          args: '--all'
 
       - name: Upload to codecov.io
         uses: codecov/codecov-action@v1.0.2
