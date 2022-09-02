@@ -25,7 +25,7 @@ use config::Config;
 use database::{establish_connection, insert_share, Share};
 use human_panic::setup_panic;
 use lazy_static::lazy_static;
-use log::{warn, trace};
+use log::{trace, warn};
 use rand::Rng;
 use std::env;
 use std::error::Error;
@@ -140,7 +140,10 @@ fn generate_warnings(share: &Share) -> Vec<&'static str> {
 fn try_save_to_database(share: &Share) -> Result<(), Box<dyn Error + Send + Sync + 'static>> {
     trace!("loading database location");
     let path = CONFIG.database_location();
-    trace!("database location found at `{}`... establishing database connection", path);
+    trace!(
+        "database location found at `{}`... establishing database connection",
+        path
+    );
     let mut conn = establish_connection(path)?;
 
     trace!("inserting share to database");

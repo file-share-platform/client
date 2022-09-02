@@ -32,9 +32,7 @@ pub fn establish_connection(
     database_url: &str,
 ) -> Result<SqliteConnection, Box<dyn std::error::Error + Send + Sync + 'static>> {
     let mut conn = SqliteConnection::establish(database_url)?;
-    conn.exclusive_transaction(move |conn| {
-        conn.run_pending_migrations(MIGRATIONS).map(|_| ())
-    })?;
+    conn.exclusive_transaction(move |conn| conn.run_pending_migrations(MIGRATIONS).map(|_| ()))?;
     Ok(conn)
 }
 

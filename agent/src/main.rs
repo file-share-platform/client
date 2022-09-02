@@ -47,7 +47,6 @@ async fn upload_file(metadata: Share, config: &Config, url: &str) {
             .await
             .expect("File unexpectedly not available!");
         let res = reqwest::Client::new()
-
             .post(url)
             .body(file_to_body(f))
             .send()
@@ -138,9 +137,12 @@ async fn handle_message(m: Message, config: &Config) -> Result<Option<Message>, 
 
         Message::Ok => Ok(None),
         Message::Error { kind, reason } => {
-            error!("Error received from server, kind: {:?}, reason: {:?}", kind, reason);
+            error!(
+                "Error received from server, kind: {:?}, reason: {:?}",
+                kind, reason
+            );
             Ok(None)
-        },
+        }
 
         e => {
             warn!("Unsupported message, received! {:?}", e);
