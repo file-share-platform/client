@@ -20,8 +20,8 @@ use chrono::{Duration, Utc};
 
 use clap::Parser;
 
-use cli_clipboard::{ClipboardContext, ClipboardProvider};
 use config::Config;
+use copypasta::{ClipboardContext, ClipboardProvider};
 use database::{establish_connection, insert_share, Share};
 use human_panic::setup_panic;
 use lazy_static::lazy_static;
