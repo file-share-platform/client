@@ -1,18 +1,33 @@
+// #![warn(
+//     missing_docs,
+//     missing_debug_implementations,
+//     missing_copy_implementations,
+//     trivial_casts,
+//     trivial_numeric_casts,
+//     unsafe_code,
+//     unstable_features,
+//     unused_import_braces,
+//     unused_qualifications,
+//     deprecated
+// )]
+
 mod error;
 
 use error::{ConfigError, ErrorKind};
+use getset::Getters;
 use reqwest::blocking::Client;
 use serde_derive::{Deserialize, Serialize};
 use std::{convert::Infallible, num::ParseIntError, path::PathBuf, str::FromStr};
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Getters)]
+#[getset(get = "pub")]
 pub struct Config {
     public_id: u64,
     private_key: Vec<u8>,
     websocket_address: String,
     server_address: String,
     file_store_location: PathBuf,
-    database_location: PathBuf,
+    database_location: String,
     max_upload_attempts: u64,
     size_limit_bytes: u64,
     default_share_time_hours: u64,
@@ -128,7 +143,7 @@ fn get_config_dir() -> PathBuf {
     dir.join("riptide")
 }
 
-impl<'r> Config {
+impl Config {
     fn __load_config() -> Result<Config, ConfigError> {
         //Validate critical paths exist
         //XXX Make this directory change with a provided flag on the cli
@@ -242,6 +257,8 @@ impl<'r> Config {
             ));
         }
 
+        let database_location = database_location.to_string_lossy().to_string();
+
         let config: Config = Config {
             public_id: agent_id.public_id,
             private_key: agent_id.passcode.as_bytes().to_vec(),
@@ -271,58 +288,17 @@ impl<'r> Config {
         })?;
         Ok(())
     }
-
-    //XXX generate these getters using a crate https://docs.rs/getset/0.1.1/getset/index.html
-    pub fn public_id(&self) -> &u64 {
-        &self.public_id
-    }
-
-    pub fn private_key(&self) -> &Vec<u8> {
-        &self.private_key
-    }
-
-    pub fn websocket_address(&'r self) -> &'r str {
-        &self.websocket_address
-    }
-
-    pub fn server_address(&'r self) -> &'r str {
-        &self.server_address
-    }
-
-    pub fn file_store_location(&'r self) -> &'r PathBuf {
-        &self.file_store_location
-    }
-
-    pub fn database_location(&'r self) -> &'r PathBuf {
-        &self.database_location
-    }
-
-    pub fn max_upload_attempts(&self) -> u64 {
-        self.max_upload_attempts
-    }
-
-    pub fn size_limit(&self) -> u64 {
-        self.size_limit_bytes
-    }
-
-    pub fn default_share_time_hours(&self) -> u64 {
-        self.default_share_time_hours
-    }
-
-    pub fn reconnect_delay_minutes(&self) -> u64 {
-        self.reconnect_delay_minutes
-    }
 }
 
 #[cfg(feature = "sync")]
-impl<'r> Config {
+impl Config {
     pub fn load_config() -> Result<Config, ConfigError> {
         Config::__load_config()
     }
 }
 
 #[cfg(feature = "async")]
-impl<'r> Config {
+impl Config {
     pub async fn load_config_async() -> Result<Config, ConfigError> {
         tokio::task::spawn_blocking(Config::__load_config)
             .await

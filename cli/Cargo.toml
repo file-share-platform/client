@@ -7,7 +7,7 @@ edition = "2021"
 
 
 [dependencies]
-ws-com-framework = { git = "https://github.com/file-share-platform/ws-com-framework", rev="53b2f1bc7d070ea77e8a53105e265f44e5ccd1a1" }
+ws-com-framework = { git = "https://github.com/file-share-platform/ws-com-framework", rev="d7dcd58cd2e445e2a344a1bbbdd089a5b9ee585f" }
 config = { path = "../config", features = ["sync"] }
 database = { path = "../database" }
 
@@ -15,13 +15,13 @@ rand = "0.8.5"
 lazy_static = "1.4.0"
 chrono = { version = "0.4" }
 
-# Interface Crates *
-clap = { version = "3.1.8", features = ["derive"]}
-clap_complete = "3.1.1"
-clap_mangen = "0.1.2"
+# Interface Crates
+clap = { version = "3.2.19", features = ["derive"]}
+clap_complete = "3.2.4"
+clap_mangen = "0.1.11"
 cli-clipboard = "0.2.1"
-whoami = "1.1.2"
-log = "0.4.16"
+whoami = "1.2.1"
+log = "0.4.17"
 pretty_env_logger = "0.4.0"
 human-panic = "1.0.3"
 

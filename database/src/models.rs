@@ -2,7 +2,7 @@ use super::schema::*;
 use diesel::Insertable;
 
 #[derive(Queryable, Insertable)]
-#[table_name = "shares"]
+#[diesel(table_name = shares)]
 pub struct Share {
     pub file_id: i32,
     pub exp: i64,

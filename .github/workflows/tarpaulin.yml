@@ -14,13 +14,19 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v2
 
+      - name: Install protoc
+        run: wget https://github.com/protocolbuffers/protobuf/releases/download/v3.20.0/protoc-3.20.0-linux-x86_64.zip &&
+          unzip protoc-3.20.0-linux-x86_64.zip &&
+          sudo cp -r include/* /usr/local/include &&
+          sudo cp bin/protoc /usr/bin/
+
       - name: Install dependencies
-        run: sudo apt-get install -y libsqlite3-dev build-essential cmake libxcb1-dev libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev
+        run: sudo apt-get install -y libsqlite3-dev libxcb1-dev libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev
 
       - name: Run cargo-tarpaulin
         uses: actions-rs/tarpaulin@v0.1
         with:
-          version: '0.15.0'
+          version: '0.21.0'
           args: '--all'
 
       - name: Upload to codecov.io

@@ -37,7 +37,7 @@ use std::path::PathBuf;
 lazy_static! {
     static ref CONFIG: Config = Config::load_config().expect("a valid config file"); //XXX: handle error gracefully?
     static ref ARGS: Args = Args::parse();
-    static ref DEFAULT_SHARE_TIME: i64 = CONFIG.default_share_time_hours() as i64;
+    static ref DEFAULT_SHARE_TIME: i64 = *CONFIG.default_share_time_hours() as i64;
 }
 
 /// Self host and share a file over the internet quickly and easily.
@@ -128,7 +128,7 @@ fn create_share() -> Result<Share, IoError> {
 /// configuration and sharing settings.
 fn generate_warnings(share: &Share) -> Vec<&'static str> {
     let mut warnings = vec![];
-    if share.file_size as u64 > CONFIG.size_limit() {
+    if share.file_size as u64 > *CONFIG.size_limit_bytes() {
         warnings.push("this file is greater than the recommended size limit.");
     }
 
@@ -139,16 +139,13 @@ fn generate_warnings(share: &Share) -> Vec<&'static str> {
 /// an error which should be processed.
 fn try_save_to_database(share: &Share) -> Result<(), Box<dyn Error + Send + Sync + 'static>> {
     trace!("loading database location");
-    if let Some(path) = CONFIG.database_location().to_str() {
-        trace!("database location found as {}\nestablishing database connection", path);
-        let conn = establish_connection(path)?;
+    let path = CONFIG.database_location();
+    trace!("database location found at `{}`... establishing database connection", path);
+    let mut conn = establish_connection(path)?;
 
-        trace!("inserting share to database");
-        insert_share(&conn, share)?;
-        Ok(())
-    } else {
-        Err(Box::new(std::io::Error::new(ErrorKind::NotFound, "unable to find database file, has it been set in config?")))
-    }
+    trace!("inserting share to database");
+    insert_share(&mut conn, share)?;
+    Ok(())
 }
 
 /// Generate the url to the file, which may be shared to another user to allow

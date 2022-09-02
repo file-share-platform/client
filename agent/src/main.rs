@@ -28,11 +28,7 @@ use tokio_tungstenite::{
     tungstenite::{protocol::WebSocketConfig, Message as TungsteniteMessage},
     MaybeTlsStream, WebSocketStream,
 };
-use ws_com_framework::{
-    error::ErrorKind,
-    message::ShareMetadata,
-    Message,
-};
+use ws_com_framework::{error::ErrorKind, Message};
 
 const MIN_RECONNECT_DELAY: usize = 5000;
 
@@ -59,11 +55,11 @@ async fn upload_file(metadata: Share, config: &Config, url: &str) {
         match res {
             Ok(_) => break,
             Err(e) => {
-                if a >= config.max_upload_attempts() {
+                a += 1;
+                if a >= *config.max_upload_attempts() {
                     error!("Failed to upload file to endpoint, error: {}", e);
                     break;
                 }
-                a += 1;
             }
         }
     }
@@ -71,55 +67,83 @@ async fn upload_file(metadata: Share, config: &Config, url: &str) {
 }
 
 async fn handle_message(m: Message, config: &Config) -> Result<Option<Message>, AgentError> {
-    let database_location = config.database_location().to_string_lossy().to_string();
     match m {
-        Message::UploadTo(file_id, ref url) => {
-
-            let item = tokio::task::spawn_blocking(move || match establish_connection(&database_location) {
-                Ok(conn) => find_share_by_id(&conn, &file_id),
-                Err(e) => Err(e),
+        Message::UploadTo {
+            file_id,
+            upload_url,
+        } => {
+            //XXX: use tokio_scoped to avoid the allocation here - or wrap config in an arc globally
+            let database_location = config.database_location().clone();
+            let item = tokio::task::spawn_blocking(move || {
+                match establish_connection(&database_location) {
+                    Ok(ref mut conn) => find_share_by_id(conn, &file_id),
+                    Err(e) => Err(e),
+                }
             })
             .await??;
 
             if let Some(f) = item {
-                upload_file(f, config, url).await;
+                upload_file(f, config, &upload_url).await;
                 Ok(None)
             } else {
-                Ok(Some(Message::Error(
-                    None,
-                    ErrorKind::FileDoesntExist,
-                )))
+                Ok(Some(Message::Error {
+                    kind: ErrorKind::FileDoesntExist,
+                    reason: None,
+                }))
             }
         }
-        Message::MetadataReq(file_id, upload_id) => {
-            let item = tokio::task::spawn_blocking(move || match establish_connection(&database_location) {
-                Ok(conn) => find_share_by_id(&conn, &file_id),
-                Err(e) => Err(e),
+        Message::MetadataReq { file_id, upload_id } => {
+            let database_location = config.database_location().clone();
+            let item = tokio::task::spawn_blocking(move || {
+                match establish_connection(&database_location) {
+                    Ok(ref mut conn) => find_share_by_id(conn, &file_id),
+                    Err(e) => Err(e),
+                }
             })
             .await??;
 
             if let Some(f) = item {
-                Ok(Some(Message::MetadataRes(ShareMetadata {
+                Ok(Some(Message::MetadataRes {
                     file_id: f.file_id as u32,
                     exp: f.exp as u64,
                     crt: f.crt as u64,
                     file_size: f.file_size as u64,
                     username: f.user_name,
                     file_name: f.file_name,
-                }, upload_id)))
+                    upload_id,
+                }))
             } else {
-                Ok(Some(Message::Error(
-                    None,
-                    ErrorKind::FileDoesntExist,
-                )))
+                Ok(Some(Message::Error {
+                    kind: ErrorKind::FileDoesntExist,
+                    reason: None,
+                }))
             }
         }
-        Message::AuthReq(pub_id) => Ok(Some(Message::AuthRes(
-            pub_id,
-            config.private_key().to_vec(),
-        ))),
+        Message::AuthReq { public_id } => {
+            Ok(Some(Message::AuthRes {
+                public_id,
+                passcode: config.private_key().to_vec(), //XXX: set this up with a zeroing field
+            }))
+        }
+        Message::StatusReq {
+            public_id: _,
+            upload_id,
+        } => Ok(Some(Message::StatusRes {
+            public_id: *config.public_id(),
+            ready: true,
+            uptime: 0, //TODO: record uptime, this should be time connected to the api - not the time the agent has been running
+            upload_id,
+            message: Some(String::from("Ready to upload")),
+        })),
+
+        Message::Ok => Ok(None),
+        Message::Error { kind, reason } => {
+            error!("Error received from server, kind: {:?}, reason: {:?}", kind, reason);
+            Ok(None)
+        },
+
         e => {
-            error!("Unsupported message, recieved! {:?}", e);
+            warn!("Unsupported message, received! {:?}", e);
             Ok(None)
         }
     }
