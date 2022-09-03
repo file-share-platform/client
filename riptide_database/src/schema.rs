@@ -1,6 +1,6 @@
 table! {
     shares (file_id) {
-        file_id -> Integer,
+        file_id -> BigInt,
         exp -> BigInt,
         crt -> BigInt,
         file_size -> BigInt,

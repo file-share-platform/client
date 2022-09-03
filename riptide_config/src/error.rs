@@ -40,7 +40,7 @@ pub enum ErrorKind {
     IoError(std::io::Error),
     TomlParseError(toml::de::Error),
     BincodeError(bincode::ErrorKind),
-    NetworkError(reqwest::Error),
+    NetworkError(ureq::Error),
     ParseError(String),
     NotFound,
     IsNotDirectory,

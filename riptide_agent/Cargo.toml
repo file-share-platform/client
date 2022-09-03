@@ -1,6 +1,6 @@
 [package]
-name = "agent"
-version = "0.1.0"
+name = "riptide_agent"
+version = "1.0.0"
 authors = ["Josiah Bull <josiah.bull7@gmail.com>"]
 edition = "2021"
 
@@ -8,8 +8,8 @@ edition = "2021"
 
 [dependencies]
 ws-com-framework = { git = "https://github.com/file-share-platform/ws-com-framework", rev="1b7b6e1562f40f4591a341170f5ade262c2dca60" }
-database = { path = "../database" }
-config = { path = "../config", default-features = false, features = ["async"] }
+riptide_database = { path = "../riptide_database" }
+riptide_config = { path = "../riptide_config" }
 
 log = "0.4.17"
 pretty_env_logger = "0.4.0"

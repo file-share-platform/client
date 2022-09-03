@@ -1,0 +1,21 @@
+[package]
+name = "riptide_database"
+version = "1.0.0"
+authors = ["Josiah Bull", "Lachlan Davidson"]
+edition = "2021"
+description = "A database abstraction layer for the Riptide file transfer system"
+repository = "https://github.com/riptide-org/client"
+license = "MIT"
+keywords = ["database", "sqlite", "riptide"]
+include=["migrations/**/*", "src/**/*", "Cargo.toml", "README.md", "LICENSE"]
+
+[dependencies]
+ws-com-framework = { git = "https://github.com/file-share-platform/ws-com-framework", rev="d7dcd58cd2e445e2a344a1bbbdd089a5b9ee585f" }
+riptide_config = { path = "../riptide_config" }
+
+diesel = { version = "2.0.0", default-features = false, features = ["sqlite", "returning_clauses_for_sqlite_3_35"] }
+diesel_migrations = "2.0.0"
+
+[lib]
+name = "riptide_database"
+path = "src/lib.rs"

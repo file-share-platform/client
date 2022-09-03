@@ -15,6 +15,9 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v2
 
+      - name: Install upx
+        run: sudo apt-get install upx
+
       - name: Install protoc
         run: wget https://github.com/protocolbuffers/protobuf/releases/download/v3.20.0/protoc-3.20.0-linux-x86_64.zip &&
           unzip protoc-3.20.0-linux-x86_64.zip &&
@@ -22,7 +25,12 @@ jobs:
           sudo cp bin/protoc /usr/bin/
 
       - name: Build Project
-        run: cargo build --release
+        run: cargo +nightly build -Z build-std=std,panic_abort --target x86_64-unknown-linux-gnu --profile production
+
+      - name: Compress Project
+        run: |
+          upx --lzma --best target/x86_64-unknown-linux-gnu/production/client
+          upx --lzma --best target/x86_64-unknown-linux-gnu/production/cli
 
       - uses: "marvinpinto/action-automatic-releases@latest"
         with:
@@ -31,5 +39,5 @@ jobs:
           files: |
             license
             readme.md
-            target/release/cli
-            target/release/agent
+            target/x86_64-unknown-linux-gnu/production/cli
+            target/x86_64-unknown-linux-gnu/production/agent

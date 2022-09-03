@@ -17,7 +17,12 @@ that runs on the client machine and is responsible for managing the file transfe
 <!-- TODO -->
 
 ### OSX (MacOS)
-<!-- TODO -->
+
+Support for MacOS should be doable, but will require implementation of the macos systemctl equivalent for the agent.
+
+### Windows 10/11
+
+Support for windows 10/11 has not yet been implemented or tested, and will take significant work to setup.
 
 ## Development
 

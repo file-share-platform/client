@@ -1,0 +1,29 @@
+[package]
+name = "riptide_cli"
+version = "1.0.0"
+authors = ["Josiah Bull <josiah.bull7@gmail.com>"]
+edition = "2021"
+
+[dependencies]
+ws-com-framework = { git = "https://github.com/file-share-platform/ws-com-framework", rev="1b7b6e1562f40f4591a341170f5ade262c2dca60" }
+riptide_config = { path = "../riptide_config" }
+riptide_database = { path = "../riptide_database" }
+
+log = "0.4.17"
+pretty_env_logger = "0.4.0"
+
+rand = "0.8.5"
+lazy_static = "1.4.0"
+
+zip = { version = "0.6.2", default-features = false, features = ["deflate"] }
+tempfile = "3.3.0"
+
+# Interface Crates
+clap = "3.2.19"
+copypasta = "0.8.1"
+whoami = "1.2.1"
+human-panic = "1.0.3"
+
+[build-dependencies]
+clap = "3.2.19"
+clap_complete = "3.2.4"

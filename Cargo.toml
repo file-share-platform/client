@@ -1,7 +1,16 @@
 [workspace]
 members = [
-    "database/",
-    "config/",
-    "agent/",
-    "cli",
+    "riptide_database/",
+    "riptide_config/",
+    "riptide_agent/",
+    "riptide_cli/",
+    # "installer/",
 ]
+
+[profile.production]
+inherits = "release"
+lto = true
+opt-level = "z"
+codegen-units = 1
+# strip = true #lose all debug/stack trace information from releases - sorta recommended? No point having human-panic with this enabled.
+# panic="abort" #lose all panic information from releases - seg fault - not recommended

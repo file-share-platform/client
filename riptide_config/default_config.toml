@@ -4,5 +4,4 @@ database_location = "${CONFIG_DIR}/shares.db"
 file_store_location = "${CONFIG_DIR}/hard_links"
 max_upload_attempts = 10
 size_limit_bytes = 2147483648
-default_share_time_hours = 48
 reconnect_delay_minutes = 15

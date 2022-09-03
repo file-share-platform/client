@@ -18,11 +18,13 @@
 
 mod error;
 
-use config::Config;
-use database::{establish_connection, find_share_by_id, Share};
+use std::time::Duration;
+
 use error::AgentError;
 use futures::{SinkExt, StreamExt};
 use log::{debug, error, info, warn};
+use riptide_config::Config;
+use riptide_database::{establish_connection, get_share_by_id, Share};
 use tokio::{fs, net::TcpStream};
 use tokio_tungstenite::{
     tungstenite::{protocol::WebSocketConfig, Message as TungsteniteMessage},
@@ -75,7 +77,7 @@ async fn handle_message(m: Message, config: &Config) -> Result<Option<Message>, 
             let database_location = config.database_location().clone();
             let item = tokio::task::spawn_blocking(move || {
                 match establish_connection(&database_location) {
-                    Ok(ref mut conn) => find_share_by_id(conn, &file_id),
+                    Ok(ref mut conn) => get_share_by_id(conn, &file_id),
                     Err(e) => Err(e),
                 }
             })
@@ -95,7 +97,7 @@ async fn handle_message(m: Message, config: &Config) -> Result<Option<Message>, 
             let database_location = config.database_location().clone();
             let item = tokio::task::spawn_blocking(move || {
                 match establish_connection(&database_location) {
-                    Ok(ref mut conn) => find_share_by_id(conn, &file_id),
+                    Ok(ref mut conn) => get_share_by_id(conn, &file_id),
                     Err(e) => Err(e),
                 }
             })
@@ -222,13 +224,26 @@ async fn handle_ws(
     res
 }
 
-#[tokio::main]
-async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    pretty_env_logger::init();
+/// Remove expired shares from the database
+async fn remove_expired_shares(
+    config: &Config,
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    let database_location = config.database_location().clone();
+    let shares: Vec<Share> = tokio::task::spawn_blocking(move || {
+        let mut conn = establish_connection(&database_location)?;
+        riptide_database::remove_expired_shares(&mut conn)
+    })
+    .await??;
 
-    debug!("Starting...");
-    let config = Config::load_config_async().await?;
+    for share in shares {
+        let path = (*config.file_store_location()).join(share.file_id.to_string());
+        tokio::fs::remove_file(path).await?;
+    }
 
+    Ok(())
+}
+
+async fn run(config: Config) {
     let ip = format!("{}/ws/{}", config.websocket_address(), config.public_id());
 
     loop {
@@ -247,7 +262,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             Ok((t, _r)) => {
                 if let Err(e) = handle_ws(&config, t).await {
                     error!("error occured when handling websocket: {}", e);
-                    break;
                 }
             }
             Err(e) => {
@@ -260,6 +274,52 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             MIN_RECONNECT_DELAY as u64,
         )))
         .await;
+    }
+}
+
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    pretty_env_logger::init();
+
+    debug!("Starting...");
+
+    let config: Config = tokio::task::spawn_blocking(Config::load_config).await??;
+
+    // spawn monitoring task to remove expired shares
+    let monitor_config = config.clone();
+    let monitor_handle = tokio::task::spawn(async move {
+        loop {
+            tokio::time::sleep(Duration::from_secs(180)).await;
+            if let Err(e) = remove_expired_shares(&monitor_config).await {
+                error!("Failed to remove expired shares: {}", e);
+            }
+        }
+    });
+
+    tokio::pin!(monitor_handle);
+
+    let runner = run(config);
+    tokio::pin!(runner);
+
+    loop {
+        tokio::select! {
+            biased;
+
+            _ = tokio::signal::ctrl_c() => {
+                info!("SIGINT recieved, shutting down");
+                break;
+            }
+
+            _ = &mut runner => {
+                info!("Runner exited, shutting down");
+                break;
+            }
+
+            _ = &mut monitor_handle => {
+                error!("Monitor exited, shutting down");
+                break;
+            }
+        }
     }
 
     debug!("Connection closed, Server Agent exiting....");

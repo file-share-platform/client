@@ -1,24 +1,26 @@
-// #![warn(
-//     missing_docs,
-//     missing_debug_implementations,
-//     missing_copy_implementations,
-//     trivial_casts,
-//     trivial_numeric_casts,
-//     unsafe_code,
-//     unstable_features,
-//     unused_import_braces,
-//     unused_qualifications,
-//     deprecated
-// )]
+//! Abstraction for configuration in the riptide client.
+
+#![warn(
+    // missing_docs,
+    missing_debug_implementations,
+    missing_copy_implementations,
+    trivial_casts,
+    trivial_numeric_casts,
+    unsafe_code,
+    unstable_features,
+    unused_import_braces,
+    unused_qualifications,
+    deprecated
+)]
 
 mod error;
 
 use error::{ConfigError, ErrorKind};
 use getset::Getters;
-use reqwest::blocking::Client;
 use serde_derive::{Deserialize, Serialize};
 use std::{convert::Infallible, num::ParseIntError, path::PathBuf, str::FromStr};
 
+/// Representation of the configuration file for the riptide client
 #[derive(Debug, Clone, Getters)]
 #[getset(get = "pub")]
 pub struct Config {
@@ -30,7 +32,6 @@ pub struct Config {
     database_location: String,
     max_upload_attempts: u64,
     size_limit_bytes: u64,
-    default_share_time_hours: u64,
     reconnect_delay_minutes: u64,
 }
 
@@ -75,7 +76,7 @@ fn load_from_toml(name: &str, path: &PathBuf) -> Result<toml::Value, ConfigError
 ///
 /// **Example**
 /// ```rust
-///     # use config::load_env;
+///     # use riptide_config::load_env;
 ///     # use std::{num::ParseIntError, path::PathBuf};
 ///     # std::fs::write("./example_config.toml", "NUMBER_SHOES = 5");
 ///     # let path: PathBuf = PathBuf::from("./example_config.toml");
@@ -117,20 +118,19 @@ where
 
 /// We call to this in the event that we are not registered yet.
 fn register_server(ip: String) -> Result<Id, ConfigError> {
-    let response = Client::new()
-        .post(&ip)
-        .send()
+    let response: Id = ureq::post(&ip)
+        .call()
         .map_err(|e| {
             ConfigError::new(
                 ErrorKind::NetworkError(e),
-                "Failed to contact server due to error",
+                "Unable to connect to server to register",
             )
         })?
-        .json::<Id>()
+        .into_json()
         .map_err(|e| {
             ConfigError::new(
-                ErrorKind::NetworkError(e),
-                "Failed to parse network response to json",
+                ErrorKind::IoError(e),
+                "Unable to parse response from server to register",
             )
         })?;
 
@@ -174,8 +174,6 @@ impl Config {
         let max_upload_attempts =
             load_env::<u64, ParseIntError>("max_upload_attempts", &config_path)?;
         let size_limit_bytes = load_env::<u64, ParseIntError>("size_limit_bytes", &config_path)?;
-        let default_share_time_hours =
-            load_env::<u64, ParseIntError>("default_share_time_hours", &config_path)?;
         let reconnect_delay_minutes =
             load_env::<u64, ParseIntError>("reconnect_delay_minutes", &config_path)?;
         let file_store_location: PathBuf =
@@ -268,13 +266,13 @@ impl Config {
             database_location,
             max_upload_attempts,
             size_limit_bytes,
-            default_share_time_hours,
             reconnect_delay_minutes,
         };
 
         Ok(config)
     }
 
+    /// Reset the configuration file to the default values
     pub fn reset_config() -> Result<(), ConfigError> {
         //Generate configuration data
         let default_config = include_str!("../default_config.toml")
@@ -290,19 +288,10 @@ impl Config {
     }
 }
 
-#[cfg(feature = "sync")]
 impl Config {
+    /// Attempt to load the configuration from the disk, synchronously. Wrap in spawn_blocking if in an async context.
     pub fn load_config() -> Result<Config, ConfigError> {
         Config::__load_config()
-    }
-}
-
-#[cfg(feature = "async")]
-impl Config {
-    pub async fn load_config_async() -> Result<Config, ConfigError> {
-        tokio::task::spawn_blocking(Config::__load_config)
-            .await
-            .unwrap()
     }
 }
 
