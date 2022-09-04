@@ -4,7 +4,6 @@ members = [
     "riptide_config/",
     "riptide_agent/",
     "riptide_cli/",
-    # "installer/",
 ]
 
 [profile.production]

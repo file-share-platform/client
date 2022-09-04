@@ -269,8 +269,8 @@ async fn run(config: Config) {
             }
         };
 
-        tokio::time::sleep(std::time::Duration::from_millis(std::cmp::max(
-            (config.reconnect_delay_minutes() * 60 * 1000) as u64,
+        tokio::time::sleep(std::time::Duration::from_secs(std::cmp::max(
+            (config.reconnect_delay_minutes() * 60) as u64,
             MIN_RECONNECT_DELAY as u64,
         )))
         .await;

@@ -1,5 +1,5 @@
 [Unit]
-Description="The Riptide agent daemon"
+Description="The Riptide agent"
 After=syslog.target network.target remote-fs.target nss-lookup.target
 
 [Service]
@@ -25,7 +25,7 @@ ProtectKernelModules=true
 
 ProtectControlGroups=true
 
-ExecStart=bin/riptide
+ExecStart=/opt/riptide/agent
 ExecStop=/bin/kill -s QUIT $MAINPID
 Restart=on-failure
 RestartSec=60s

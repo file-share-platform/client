@@ -10,7 +10,7 @@ keywords = ["database", "sqlite", "riptide"]
 include=["migrations/**/*", "src/**/*", "Cargo.toml", "README.md", "LICENSE"]
 
 [dependencies]
-ws-com-framework = { git = "https://github.com/file-share-platform/ws-com-framework", rev="d7dcd58cd2e445e2a344a1bbbdd089a5b9ee585f" }
+ws-com-framework = { git = "https://github.com/file-share-platform/ws-com-framework", rev="1b7b6e1562f40f4591a341170f5ade262c2dca60" }
 riptide_config = { path = "../riptide_config" }
 
 diesel = { version = "2.0.0", default-features = false, features = ["sqlite", "returning_clauses_for_sqlite_3_35"] }

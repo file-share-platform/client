@@ -24,13 +24,21 @@ jobs:
           sudo cp -r include/* /usr/local/include &&
           sudo cp bin/protoc /usr/bin/
 
+      - name: Install nightly toolchain
+        run: |
+          rustup toolchain install nightly
+          rustup component add rust-src --toolchain nightly-x86_64-unknown-linux-gnu
+
       - name: Build Project
         run: cargo +nightly build -Z build-std=std,panic_abort --target x86_64-unknown-linux-gnu --profile production
 
       - name: Compress Project
         run: |
-          upx --lzma --best target/x86_64-unknown-linux-gnu/production/client
-          upx --lzma --best target/x86_64-unknown-linux-gnu/production/cli
+          upx --lzma --best target/x86_64-unknown-linux-gnu/production/riptide_agent
+          upx --lzma --best target/x86_64-unknown-linux-gnu/production/riptide_cli
+          mv target/x86_64-unknown-linux-gnu/production/riptide_agent agent
+          mv target/x86_64-unknown-linux-gnu/production/riptide_cli cli
+          zip shell_completions.zip target/x86_64-unknown-linux-gnu/production/shell_completions/*
 
       - uses: "marvinpinto/action-automatic-releases@latest"
         with:
@@ -39,5 +47,6 @@ jobs:
           files: |
             license
             readme.md
-            target/x86_64-unknown-linux-gnu/production/cli
-            target/x86_64-unknown-linux-gnu/production/agent
+            cli
+            agent
+            shell_completions.zip
