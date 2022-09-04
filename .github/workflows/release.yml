@@ -50,3 +50,4 @@ jobs:
             cli
             agent
             shell_completions.zip
+            riptide_agent/riptide.service

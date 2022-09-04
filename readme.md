@@ -8,21 +8,52 @@
 This repo contains client side applications for the riptide file transfer application. The client side is made up of two main components the Agent and the Cli. The Agent is a background process
 that runs on the client machine and is responsible for managing the file transfer process. The Cli is a command line interface that is used to interact with the Agent, add and remove shares.
 
-## Installation and Use
+## Usage
+
+```bash
+riptide --help
+```
+
+## Installation
 
 ### Fedora 36
-<!-- TODO -->
 
-### Ubuntu 22.04
-<!-- TODO -->
+```bash
+mkdir /opt/riptide
 
-### OSX (MacOS)
+export VERSION=v1.0.0-rc
 
-Support for MacOS should be doable, but will require implementation of the macos systemctl equivalent for the agent.
+# collect executables for 1.0 release
+wget https://github.com/riptide-org/client/releases/download/${VERSION}/agent -O /opt/riptide/agent
+wget https://github.com/riptide-org/client/releases/download/${VERSION}/cli -O /usr/local/bin/riptide
 
-### Windows 10/11
+# set permissoins for executables
+chmod +x /opt/riptide/agent
+chmod +x /usr/local/bin/riptide
 
-Support for windows 10/11 has not yet been implemented or tested, and will take significant work to setup.
+# create user and group
+groupadd riptide
+useradd --system --shell /usr/sbin/nologin --home /opt/riptide -g riptide riptide
+
+# create systemd service
+wget https://github.com/riptide-org/client/releases/download/${VERSION}/riptide.service -O /etc/systemd/system/riptide.service
+systemctl daemon-reload
+systemctl enable riptide
+systemctl start riptide
+
+# OPTIONAL: install shell completion files
+wget https://github.com/riptide-org/client/releases/download/${VERSION}/shell_completions.zip
+unzip shell_completions.zip
+
+#BASH
+mv shell_completions/riptide.bash /etc/bash_completion.d/riptide
+
+#ZSH
+mv shell_completions/riptide /usr/share/zsh/site-functions/riptide
+
+#FISH
+mv shell_completions/riptide.fish /usr/share/fish/vendor_completions.d/riptide.fish
+```
 
 ## Development
 
@@ -31,7 +62,7 @@ Support for windows 10/11 has not yet been implemented or tested, and will take 
 ```sh
     # Install Deps
     sudo dnf groupinstall @development-tools @development-libraries
-    sudo dnf install libsqlite3x-devel
+    sudo dnf install libsqlite3x-devel libxcb-devel
 
     # Install Rust
     curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh

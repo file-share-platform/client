@@ -1,7 +1,7 @@
 websocket_address = "wss://localhost:8080"
-server_address = "https://localhost:8080"
+server_address = "https://localhost:8080/api/1"
 database_location = "${CONFIG_DIR}/shares.db"
-file_store_location = "${CONFIG_DIR}/hard_links"
+file_store_location = "${CONFIG_DIR}/files"
 max_upload_attempts = 10
 size_limit_bytes = 2147483648
 reconnect_delay_minutes = 15
