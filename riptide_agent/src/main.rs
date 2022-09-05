@@ -87,9 +87,13 @@ async fn handle_message(m: Message, config: &Config) -> Result<Option<Message>, 
                 upload_file(f, config, &upload_url).await;
                 Ok(None)
             } else {
+                let upload_id = upload_url
+                    .split('/')
+                    .last()
+                    .expect("Upload URL is invalid, no / found!");
                 Ok(Some(Message::Error {
                     kind: ErrorKind::FileDoesntExist,
-                    reason: None,
+                    reason: Some(upload_id.to_string()),
                 }))
             }
         }
