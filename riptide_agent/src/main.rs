@@ -36,7 +36,7 @@ use std::{sync::Arc, time::Duration};
 
 use error::AgentError;
 use futures::{SinkExt, StreamExt};
-use log::{debug, error, info, warn};
+use log::{debug, error, info, trace, warn};
 use riptide_config::Config;
 use riptide_database::{establish_connection, get_share_by_id, Share};
 use tokio::{fs, net::TcpStream, sync::RwLock, time::Instant};
@@ -177,94 +177,103 @@ async fn handle_ws(
     config: Arc<RwLock<Config>>,
     websocket: WebSocketStream<MaybeTlsStream<TcpStream>>,
 ) -> Result<bool, AgentError> {
-    let websocket = Arc::new(RwLock::new(websocket));
+    let mut websocket = websocket;
 
     let mut handles = Vec::new();
     let (tx, mut rx) = tokio::sync::mpsc::channel::<Result<Option<Message>, AgentError>>(20);
 
     let mut res = Ok(false);
     loop {
-        // if there are any messages in the channel, send them
-        while let Ok(m) = rx.try_recv() {
-            match m {
-                Ok(Some(msg)) => {
-                    let bin: Vec<u8> = match msg.try_into() {
-                        Ok(d) => d,
-                        Err(e) => {
+        tokio::select! {
+                send_message = rx.recv() => {
+                    debug!("Sending message to server");
+                    trace!("Message: {:?}", send_message);
+
+                    if let Some(m) = send_message {
+                        match m {
+                            Ok(Some(msg)) => {
+                                let bin: Vec<u8> = match msg.try_into() {
+                                    Ok(d) => d,
+                                    Err(e) => {
+                                        res = Err(e.into());
+                                        break;
+                                    }
+                                };
+                                if let Err(e) = websocket
+                                    .send(TungsteniteMessage::Binary(bin))
+                                    .await
+                                {
+                                    res = Err(e.into());
+                                    break;
+                                }
+                            }
+                            Ok(None) => {}
+                            Err(e) => {
+                                res = Err(e);
+                                break;
+                            }
+                        }
+                    } else {
+                        error!("Message channel closed unexpectedly!");
+                        break;
+                    }
+                },
+
+                recv_message = websocket.next() => {
+                    debug!("Received message from server");
+                    trace!("Message: {:?}", recv_message);
+
+                match recv_message {
+                    Some(Ok(TungsteniteMessage::Binary(msg))) => {
+                        let msg: Message = match msg.try_into() {
+                            Ok(m) => m,
+                            Err(e) => {
+                                res = Err(e.into());
+                                break;
+                            }
+                        };
+
+                        let local_tx = tx.clone();
+                        let local_config = config.clone();
+                        let h = tokio::spawn(async move {
+                            local_tx
+                                .send(handle_message(msg, local_config).await)
+                                .await
+                                .unwrap();
+                        });
+                        handles.push(h);
+                    }
+                    Some(Ok(TungsteniteMessage::Ping(msg))) => {
+                        if let Err(e) = websocket
+                            .send(TungsteniteMessage::Pong(msg))
+                            .await
+                        {
                             res = Err(e.into());
                             break;
                         }
-                    };
-                    if let Err(e) = websocket
-                        .write()
-                        .await
-                        .send(TungsteniteMessage::Binary(bin))
-                        .await
-                    {
+                    }
+                    Some(Ok(TungsteniteMessage::Pong(_))) => {
+                        info!("Pong recieved");
+                    }
+                    Some(Ok(TungsteniteMessage::Text(msg))) => {
+                        warn!("recieved text message from server: {}", msg)
+                    }
+                    Some(Ok(TungsteniteMessage::Close(e))) => {
+                        info!("got close message from server message: {:?}", e);
+                        res = Ok(false); //XXX: should we try to reconnect?
+                    }
+                    Some(Ok(TungsteniteMessage::Frame(_))) => {
+                        error!("recieved raw frame");
+                        res = Err(AgentError::BadFrame(String::from("got raw frame")));
+                        break;
+                    }
+                    Some(Err(e)) => {
                         res = Err(e.into());
                         break;
                     }
-                }
-                Ok(None) => {}
-                Err(e) => {
-                    res = Err(e);
-                    break;
+                    None => break,
                 }
             }
-        }
-
-        // try to receive and act on new messages
-        match websocket.write().await.next().await {
-            Some(Ok(TungsteniteMessage::Binary(msg))) => {
-                let msg: Message = match msg.try_into() {
-                    Ok(m) => m,
-                    Err(e) => {
-                        res = Err(e.into());
-                        break;
-                    }
-                };
-
-                let local_tx = tx.clone();
-                let local_config = config.clone();
-                let h = tokio::spawn(async move {
-                    local_tx
-                        .send(handle_message(msg, local_config).await)
-                        .await
-                        .unwrap();
-                });
-                handles.push(h);
-            }
-            Some(Ok(TungsteniteMessage::Ping(msg))) => {
-                if let Err(e) = websocket
-                    .write()
-                    .await
-                    .send(TungsteniteMessage::Pong(msg))
-                    .await
-                {
-                    res = Err(e.into());
-                    break;
-                }
-            }
-            Some(Ok(TungsteniteMessage::Pong(_))) => {
-                info!("Pong recieved");
-            }
-            Some(Ok(TungsteniteMessage::Text(msg))) => {
-                warn!("recieved text message from server: {}", msg)
-            }
-            Some(Ok(TungsteniteMessage::Close(e))) => {
-                info!("got close message from server message: {:?}", e);
-                res = Ok(false); //XXX: should we try to reconnect?
-            }
-            Some(Ok(TungsteniteMessage::Frame(_))) => {
-                error!("recieved raw frame");
-                res = Err(AgentError::BadFrame(String::from("got raw frame")));
-                break;
-            }
-            Some(Err(e)) => {
-                res = Err(e.into());
-                break;
-            }
-            None => break,
         }
     }
 
@@ -273,7 +282,7 @@ async fn handle_ws(
         h.abort();
     }
 
-    websocket.write_owned().await.close(None).await?;
+    websocket.close(None).await?;
     res
 }
 

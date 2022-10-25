@@ -141,8 +141,8 @@ impl Config {
             })?;
         }
 
-        // remove all hard_links
-        let hard_link_dir = get_config_dir().join("hard_links");
+        // remove all files
+        let hard_link_dir = get_config_dir().join("files");
         if hard_link_dir.exists() {
             std::fs::remove_dir_all(&hard_link_dir).map_err(|e| {
                 ConfigError::new(

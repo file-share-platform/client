@@ -39,7 +39,7 @@ jobs:
           mv target/x86_64-unknown-linux-gnu/production/riptide_agent agent
           mv target/x86_64-unknown-linux-gnu/production/riptide_cli cli
           mv target/x86_64-unknown-linux-gnu/production/shell_completions completions
-          mv completions/_riptide completions/_riptide.zsh
+          mv completions/_riptide completions/riptide.zsh
 
       - uses: "marvinpinto/action-automatic-releases@latest"
         with:
@@ -51,7 +51,7 @@ jobs:
             cli
             agent
             shell_completions.zip
-            completions/_riptide.zsh
+            completions/riptide.zsh
             completions/riptide.bash
             completions/riptide.fish
             completions/riptide.elv
