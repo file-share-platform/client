@@ -11,48 +11,33 @@ that runs on the client machine and is responsible for managing the file transfe
 ## Usage
 
 ```bash
-riptide --help
+> riptide --help
+
+riptide 1.0.0
+Fast and easy file sharing over the internet, through a simple cli.
+
+USAGE:
+    riptide [OPTIONS] [file]
+
+ARGS:
+    <file>    Name of the file to share
+
+OPTIONS:
+    -h, --help            Print help information
+    -l, --list            List all currently shared files
+    -r, --remove <ID>     Remove the file share indicated by this id by index or id
+        --reset-config    Reset the config file to default
+    -t, --time <HOURS>    Set how many hours to share the file for [default: 24]
+    -V, --version         Print version information
+
 ```
 
 ## Installation
 
-### Fedora 36
+Installation can be done via a simple bash script.
 
 ```bash
-mkdir /opt/riptide
-
-export VERSION=v1.0.0-rc
-
-# collect executables for 1.0 release
-wget https://github.com/riptide-org/client/releases/download/${VERSION}/agent -O /opt/riptide/agent
-wget https://github.com/riptide-org/client/releases/download/${VERSION}/cli -O /usr/local/bin/riptide
-
-# set permissoins for executables
-chmod +x /opt/riptide/agent
-chmod +x /usr/local/bin/riptide
-
-# create user and group
-groupadd riptide
-useradd --system --shell /usr/sbin/nologin --home /opt/riptide -g riptide riptide
-
-# create systemd service
-wget https://github.com/riptide-org/client/releases/download/${VERSION}/riptide.service -O /etc/systemd/system/riptide.service
-systemctl daemon-reload
-systemctl enable riptide
-systemctl start riptide
-
-# OPTIONAL: install shell completion files
-wget https://github.com/riptide-org/client/releases/download/${VERSION}/shell_completions.zip
-unzip shell_completions.zip
-
-#BASH
-mv shell_completions/riptide.bash /etc/bash_completion.d/riptide
-
-#ZSH
-mv shell_completions/riptide /usr/share/zsh/site-functions/riptide
-
-#FISH
-mv shell_completions/riptide.fish /usr/share/fish/vendor_completions.d/riptide.fish
+curl https://raw.githubusercontent.com/riptide-org/client/main/install.sh | bash
 ```
 
 ## Development
