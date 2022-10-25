@@ -9,7 +9,7 @@ members = [
 [profile.production]
 inherits = "release"
 lto = true
-opt-level = "z"
+opt-level = "s"
 codegen-units = 1
 # strip = true #lose all debug/stack trace information from releases - sorta recommended? No point having human-panic with this enabled.
 # panic="abort" #lose all panic information from releases - seg fault - not recommended

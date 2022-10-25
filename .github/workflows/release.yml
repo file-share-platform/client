@@ -38,7 +38,8 @@ jobs:
           upx --lzma --best target/x86_64-unknown-linux-gnu/production/riptide_cli
           mv target/x86_64-unknown-linux-gnu/production/riptide_agent agent
           mv target/x86_64-unknown-linux-gnu/production/riptide_cli cli
-          zip shell_completions.zip target/x86_64-unknown-linux-gnu/production/shell_completions/*
+          mv target/x86_64-unknown-linux-gnu/production/shell_completions completions
+          mv completions/_riptide completions/_riptide.zsh
 
       - uses: "marvinpinto/action-automatic-releases@latest"
         with:
@@ -50,3 +51,14 @@ jobs:
             cli
             agent
             shell_completions.zip
+            completions/_riptide.zsh
+            completions/riptide.bash
+            completions/riptide.fish
+            completions/riptide.elv
+
+      - name: Run latest-tag
+        uses: EndBug/latest-tag@latest
+        with:
+          ref: latest
+          description: The latest release for the dds application
+          force-branch: false

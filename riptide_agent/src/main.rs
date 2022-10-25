@@ -48,13 +48,8 @@ use ws_com_framework::{error::ErrorKind, Message};
 
 const MIN_RECONNECT_DELAY: usize = 5000;
 
-fn file_to_body(f: tokio::fs::File) -> reqwest::Body {
-    let stream = tokio_util::codec::FramedRead::new(f, tokio_util::codec::BytesCodec::new());
-    reqwest::Body::wrap_stream(stream)
-}
-
 /// Self contained function to upload files to the server
-async fn upload_file(metadata: Share, config: Arc<RwLock<Config>>, url: &str) {
+async fn upload_file(metadata: Share, config: Arc<RwLock<Config>>, url: String) {
     let loc = (*config.read().await.file_store_location()).join(metadata.file_id.to_string());
 
     let mut a = 0;
@@ -62,11 +57,17 @@ async fn upload_file(metadata: Share, config: Arc<RwLock<Config>>, url: &str) {
         let f = fs::File::open(&loc)
             .await
             .expect("File unexpectedly not available!");
-        let res = reqwest::Client::new()
-            .post(url)
-            .body(file_to_body(f))
-            .send()
-            .await;
+
+        let f = f.into_std().await;
+
+        let local_url = url.clone();
+        let res = tokio::task::spawn_blocking(move || {
+            ureq::post(&local_url)
+                .set("Content-Type", "application/octet-stream")
+                .send(f)
+        })
+        .await;
+
         match res {
             Ok(_) => break,
             Err(e) => {
@@ -101,7 +102,7 @@ async fn handle_message(
             .await??;
 
             if let Some(f) = item {
-                upload_file(f, config, &upload_url).await;
+                upload_file(f, config, upload_url).await;
                 Ok(None)
             } else {
                 let upload_id = upload_url

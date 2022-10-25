@@ -19,11 +19,11 @@ zip = { version = "0.6.2", default-features = false, features = ["deflate"] }
 tempfile = "3.3.0"
 
 # Interface Crates
-clap = "3.2.19"
-copypasta = "0.8.1"
+clap = {version = "3.2.23", default-features = false }
+# copypasta = "0.8.1"
 whoami = "1.2.1"
 human-panic = "1.0.3"
 
 [build-dependencies]
-clap = "3.2.19"
-clap_complete = "3.2.4"
+clap = "3.2.23"
+clap_complete = "3.2.5"

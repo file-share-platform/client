@@ -29,7 +29,7 @@
 
 mod cli;
 
-use copypasta::{ClipboardContext, ClipboardProvider};
+// use copypasta::{ClipboardContext, ClipboardProvider};
 use human_panic::setup_panic;
 use lazy_static::lazy_static;
 use log::{error, info, trace};
@@ -155,20 +155,20 @@ fn try_save_to_database(share: &Share) -> Result<(), Box<dyn Error + Send + Sync
 /// them to download your file.
 fn generate_link_url(share: &Share) -> String {
     format!(
-        "{}/agents/{}/files/{}",
+        "{}/f/{}/{}",
         CONFIG.server_address(),
         CONFIG.public_id().unwrap(),
         share.file_id as u32
     )
 }
 
-fn save_to_clipboard(data: &str) -> Result<(), Box<dyn Error + Send + Sync + 'static>> {
-    let mut ctx = ClipboardContext::new()?;
-    ctx.set_contents(data.to_owned())?;
-    // note: not sure why, but we need to get the contents of the clipboard to make it "stay" in the clipboard.
-    assert_eq!(ctx.get_contents()?, data);
-    Ok(())
-}
+// fn save_to_clipboard(data: &str) -> Result<(), Box<dyn Error + Send + Sync + 'static>> {
+//     let mut ctx = ClipboardContext::new()?;
+//     ctx.set_contents(data.to_owned())?;
+//     // note: not sure why, but we need to get the contents of the clipboard to make it "stay" in the clipboard.
+//     assert_eq!(ctx.get_contents()?, data);
+//     Ok(())
+// }
 
 fn handle_share(
     filename: &PathBuf,
@@ -183,10 +183,10 @@ fn handle_share(
     trace!("generating link url");
     let link = generate_link_url(&share);
 
-    trace!("saving to clipboard");
-    if let Err(e) = save_to_clipboard(&link) {
-        error!("Failed to save to clipboard: {}", e);
-    }
+    // trace!("saving to clipboard");
+    // if let Err(e) = save_to_clipboard(&link) {
+    //     error!("Failed to save to clipboard: {}", e);
+    // }
 
     println!("The file has been shared!");
     println!("The link to your file is {}", &link);

@@ -3,7 +3,7 @@ use std::path::PathBuf;
 use clap::{Arg, Command};
 
 pub fn build_cli() -> Command<'static> {
-    Command::new("Riptide")
+    Command::new("riptide")
         .name("riptide")
         .author(env!("CARGO_PKG_AUTHORS"))
         .version(env!("CARGO_PKG_VERSION"))
