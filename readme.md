@@ -38,6 +38,9 @@ Installation can be done via a simple bash script.
 
 ```bash
 curl https://raw.githubusercontent.com/riptide-org/client/main/install.sh | bash
+
+# or if you want a specific version
+curl https://raw.githubusercontent.com/riptide-org/client/main/install.sh | VERSION=v1.0.0-rc bash
 ```
 
 ## Development
