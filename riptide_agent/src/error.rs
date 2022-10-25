@@ -3,7 +3,7 @@ use tokio::task::JoinError;
 #[derive(Debug)]
 pub enum AgentError {
     ReadFile(std::io::Error),
-    Http(reqwest::Error),
+    Http(ureq::Error),
     JoinError(JoinError),
     TokioError(tokio_tungstenite::tungstenite::Error),
     FrameworkError(ws_com_framework::Error),
@@ -17,14 +17,14 @@ impl From<tokio_tungstenite::tungstenite::Error> for AgentError {
     }
 }
 
-impl std::convert::From<std::io::Error> for AgentError {
+impl From<std::io::Error> for AgentError {
     fn from(e: std::io::Error) -> AgentError {
         AgentError::ReadFile(e)
     }
 }
 
-impl std::convert::From<reqwest::Error> for AgentError {
-    fn from(e: reqwest::Error) -> AgentError {
+impl From<ureq::Error> for AgentError {
+    fn from(e: ureq::Error) -> AgentError {
         AgentError::Http(e)
     }
 }

@@ -3,7 +3,7 @@ use std::path::PathBuf;
 use clap::{Arg, Command};
 
 pub fn build_cli() -> Command<'static> {
-    Command::new("Riptide")
+    Command::new("riptide")
         .name("riptide")
         .author(env!("CARGO_PKG_AUTHORS"))
         .version(env!("CARGO_PKG_VERSION"))
@@ -58,6 +58,12 @@ pub fn build_cli() -> Command<'static> {
                 .index(1)
                 .allow_invalid_utf8(false)
                 .value_parser(clap::value_parser!(PathBuf)),
+        )
+        .arg(
+            Arg::new("reset-config")
+                .help("Reset the config file to default")
+                .long("reset-config")
+                .takes_value(false),
         )
 }
 

@@ -28,7 +28,7 @@ jobs:
         with:
           repo_token: "${{ secrets.GITHUB_TOKEN }}"
           prerelease: true
-          automatic_release_tag: "dev"
+          automatic_release_tag: "nightly"
           title: "Dev Build"
           files: |
             license

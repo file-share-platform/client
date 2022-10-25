@@ -23,7 +23,7 @@ fn main() -> std::io::Result<()> {
     std::fs::create_dir_all(&outdir)?;
 
     for shell in Shell::value_variants() {
-        generate_to(*shell, &mut cmd, "Riptide", &outdir)?;
+        generate_to(*shell, &mut cmd, "riptide", &outdir)?;
     }
 
     println!(

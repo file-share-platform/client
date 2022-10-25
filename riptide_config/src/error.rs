@@ -34,7 +34,6 @@ impl<'k> ConfigError {
     }
 }
 
-//XXX consider creating conversions from wrapped types into our own ErrorKind.
 #[derive(Debug)]
 pub enum ErrorKind {
     IoError(std::io::Error),
@@ -50,8 +49,17 @@ pub enum ErrorKind {
 
 impl std::fmt::Display for ConfigError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        //TODO implement std::fmt::display for error type
-        write!(f, "A configuration error has occured")
+        match &self.kind {
+            ErrorKind::IoError(e) => write!(f, "IO Error: {}", e),
+            ErrorKind::TomlParseError(e) => write!(f, "Toml Parse Error: {}", e),
+            ErrorKind::BincodeError(e) => write!(f, "Bincode Error: {}", e),
+            ErrorKind::NetworkError(e) => write!(f, "Network Error: {}", e),
+            ErrorKind::ParseError(e) => write!(f, "Parse Error: {}", e),
+            ErrorKind::NotFound => write!(f, "Not Found"),
+            ErrorKind::IsNotDirectory => write!(f, "Is Not Directory"),
+            ErrorKind::IsDirectory => write!(f, "Is Directory"),
+            ErrorKind::SaveError => write!(f, "Save Error"),
+        }
     }
 }
 
