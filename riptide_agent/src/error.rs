@@ -17,13 +17,13 @@ impl From<tokio_tungstenite::tungstenite::Error> for AgentError {
     }
 }
 
-impl std::convert::From<std::io::Error> for AgentError {
+impl From<std::io::Error> for AgentError {
     fn from(e: std::io::Error) -> AgentError {
         AgentError::ReadFile(e)
     }
 }
 
-impl std::convert::From<reqwest::Error> for AgentError {
+impl From<reqwest::Error> for AgentError {
     fn from(e: reqwest::Error) -> AgentError {
         AgentError::Http(e)
     }

@@ -11,6 +11,8 @@ keywords = ["config", "configuration", "riptide"]
 [dependencies]
 ureq = { version = "2.5.0", default-features = false, features = ["json", "tls"]}
 
+log = "0.4.17"
+
 dirs = "4.0.0"
 toml = "0.5.9"
 serde = "1.0.144"

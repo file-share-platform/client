@@ -59,6 +59,12 @@ pub fn build_cli() -> Command<'static> {
                 .allow_invalid_utf8(false)
                 .value_parser(clap::value_parser!(PathBuf)),
         )
+        .arg(
+            Arg::new("reset-config")
+                .help("Reset the config file to default")
+                .long("reset-config")
+                .takes_value(false),
+        )
 }
 
 #[test]

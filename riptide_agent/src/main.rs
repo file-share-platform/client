@@ -16,16 +16,30 @@
 //! 5. In the event that the Central-API is not available for a connection or disconnects us, sleep for 1 minute then
 //!    re-attempt the connection.
 
+#![warn(
+    missing_docs,
+    missing_debug_implementations,
+    missing_copy_implementations,
+    // clippy::missing_docs_in_private_items, //TODO
+    trivial_casts,
+    trivial_numeric_casts,
+    unsafe_code,
+    unstable_features,
+    unused_import_braces,
+    unused_qualifications,
+    deprecated
+)]
+
 mod error;
 
-use std::time::Duration;
+use std::{sync::Arc, time::Duration};
 
 use error::AgentError;
 use futures::{SinkExt, StreamExt};
 use log::{debug, error, info, warn};
 use riptide_config::Config;
 use riptide_database::{establish_connection, get_share_by_id, Share};
-use tokio::{fs, net::TcpStream};
+use tokio::{fs, net::TcpStream, sync::RwLock, time::Instant};
 use tokio_tungstenite::{
     tungstenite::{protocol::WebSocketConfig, Message as TungsteniteMessage},
     MaybeTlsStream, WebSocketStream,
@@ -40,8 +54,8 @@ fn file_to_body(f: tokio::fs::File) -> reqwest::Body {
 }
 
 /// Self contained function to upload files to the server
-async fn upload_file(metadata: Share, config: &Config, url: &str) {
-    let loc = (*config.file_store_location()).join(metadata.file_id.to_string());
+async fn upload_file(metadata: Share, config: Arc<RwLock<Config>>, url: &str) {
+    let loc = (*config.read().await.file_store_location()).join(metadata.file_id.to_string());
 
     let mut a = 0;
     loop {
@@ -57,7 +71,7 @@ async fn upload_file(metadata: Share, config: &Config, url: &str) {
             Ok(_) => break,
             Err(e) => {
                 a += 1;
-                if a >= *config.max_upload_attempts() {
+                if a >= *config.read().await.max_upload_attempts() {
                     error!("Failed to upload file to endpoint, error: {}", e);
                     break;
                 }
@@ -67,14 +81,17 @@ async fn upload_file(metadata: Share, config: &Config, url: &str) {
     debug!("File {} uploaded to: {}", metadata.file_name, url);
 }
 
-async fn handle_message(m: Message, config: &Config) -> Result<Option<Message>, AgentError> {
+async fn handle_message(
+    m: Message,
+    config: Arc<RwLock<Config>>,
+) -> Result<Option<Message>, AgentError> {
     match m {
         Message::UploadTo {
             file_id,
             upload_url,
         } => {
             //XXX: use tokio_scoped to avoid the allocation here - or wrap config in an arc globally
-            let database_location = config.database_location().clone();
+            let database_location = config.read().await.database_location().clone();
             let item = tokio::task::spawn_blocking(move || {
                 match establish_connection(&database_location) {
                     Ok(ref mut conn) => get_share_by_id(conn, &file_id),
@@ -98,7 +115,7 @@ async fn handle_message(m: Message, config: &Config) -> Result<Option<Message>, 
             }
         }
         Message::MetadataReq { file_id, upload_id } => {
-            let database_location = config.database_location().clone();
+            let database_location = config.read().await.database_location().clone();
             let item = tokio::task::spawn_blocking(move || {
                 match establish_connection(&database_location) {
                     Ok(ref mut conn) => get_share_by_id(conn, &file_id),
@@ -124,17 +141,15 @@ async fn handle_message(m: Message, config: &Config) -> Result<Option<Message>, 
                 }))
             }
         }
-        Message::AuthReq { public_id } => {
-            Ok(Some(Message::AuthRes {
-                public_id,
-                passcode: config.private_key().to_vec(), //XXX: set this up with a zeroing field
-            }))
-        }
+        Message::AuthReq { public_id } => Ok(Some(Message::AuthRes {
+            public_id,
+            passcode: config.read().await.private_key().as_ref().unwrap().to_vec(),
+        })),
         Message::StatusReq {
             public_id: _,
             upload_id,
         } => Ok(Some(Message::StatusRes {
-            public_id: *config.public_id(),
+            public_id: config.read().await.public_id().unwrap(),
             ready: true,
             uptime: 0, //TODO: record uptime, this should be time connected to the api - not the time the agent has been running
             upload_id,
@@ -158,13 +173,47 @@ async fn handle_message(m: Message, config: &Config) -> Result<Option<Message>, 
 }
 
 async fn handle_ws(
-    config: &Config,
-    mut websocket: WebSocketStream<MaybeTlsStream<TcpStream>>,
+    config: Arc<RwLock<Config>>,
+    websocket: WebSocketStream<MaybeTlsStream<TcpStream>>,
 ) -> Result<bool, AgentError> {
+    let websocket = Arc::new(RwLock::new(websocket));
+
+    let mut handles = Vec::new();
+    let (tx, mut rx) = tokio::sync::mpsc::channel::<Result<Option<Message>, AgentError>>(20);
+
     let mut res = Ok(false);
     loop {
-        //Loop to get messages
-        match websocket.next().await {
+        // if there are any messages in the channel, send them
+        while let Ok(m) = rx.try_recv() {
+            match m {
+                Ok(Some(msg)) => {
+                    let bin: Vec<u8> = match msg.try_into() {
+                        Ok(d) => d,
+                        Err(e) => {
+                            res = Err(e.into());
+                            break;
+                        }
+                    };
+                    if let Err(e) = websocket
+                        .write()
+                        .await
+                        .send(TungsteniteMessage::Binary(bin))
+                        .await
+                    {
+                        res = Err(e.into());
+                        break;
+                    }
+                }
+                Ok(None) => {}
+                Err(e) => {
+                    res = Err(e);
+                    break;
+                }
+            }
+        }
+
+        // try to receive and act on new messages
+        match websocket.write().await.next().await {
             Some(Ok(TungsteniteMessage::Binary(msg))) => {
                 let msg: Message = match msg.try_into() {
                     Ok(m) => m,
@@ -174,29 +223,23 @@ async fn handle_ws(
                     }
                 };
 
-                match handle_message(msg, config).await {
-                    Ok(Some(msg)) => {
-                        let bin: Vec<u8> = match msg.try_into() {
-                            Ok(d) => d,
-                            Err(e) => {
-                                res = Err(e.into());
-                                break;
-                            }
-                        };
-                        if let Err(e) = websocket.send(TungsteniteMessage::Binary(bin)).await {
-                            res = Err(e.into());
-                            break;
-                        }
-                    }
-                    Ok(None) => {}
-                    Err(e) => {
-                        res = Err(e);
-                        break;
-                    }
-                }
+                let local_tx = tx.clone();
+                let local_config = config.clone();
+                let h = tokio::spawn(async move {
+                    local_tx
+                        .send(handle_message(msg, local_config).await)
+                        .await
+                        .unwrap();
+                });
+                handles.push(h);
             }
             Some(Ok(TungsteniteMessage::Ping(msg))) => {
-                if let Err(e) = websocket.send(TungsteniteMessage::Pong(msg)).await {
+                if let Err(e) = websocket
+                    .write()
+                    .await
+                    .send(TungsteniteMessage::Pong(msg))
+                    .await
+                {
                     res = Err(e.into());
                     break;
                 }
@@ -224,15 +267,20 @@ async fn handle_ws(
         }
     }
 
-    websocket.close(None).await?;
+    // kill all the handles
+    for h in handles {
+        h.abort();
+    }
+
+    websocket.write_owned().await.close(None).await?;
     res
 }
 
 /// Remove expired shares from the database
 async fn remove_expired_shares(
-    config: &Config,
+    config: Arc<RwLock<Config>>,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    let database_location = config.database_location().clone();
+    let database_location = config.read().await.database_location().clone();
     let shares: Vec<Share> = tokio::task::spawn_blocking(move || {
         let mut conn = establish_connection(&database_location)?;
         riptide_database::remove_expired_shares(&mut conn)
@@ -240,16 +288,21 @@ async fn remove_expired_shares(
     .await??;
 
     for share in shares {
-        let path = (*config.file_store_location()).join(share.file_id.to_string());
+        let path = (*config.read().await.file_store_location()).join(share.file_id.to_string());
         tokio::fs::remove_file(path).await?;
     }
 
     Ok(())
 }
 
-async fn run(config: Config) {
-    let ip = format!("{}/ws/{}", config.websocket_address(), config.public_id());
-
+async fn run(config: Arc<RwLock<Config>>) {
+    let reader = config.read().await;
+    let ip = format!(
+        "{}/api/v1/ws/{}",
+        reader.websocket_address(),
+        reader.public_id().unwrap()
+    );
+    let reconnect_delay = reader.reconnect_delay_minutes();
     loop {
         match tokio_tungstenite::connect_async_tls_with_config(
             &ip,
@@ -264,8 +317,8 @@ async fn run(config: Config) {
         .await
         {
             Ok((t, _r)) => {
-                if let Err(e) = handle_ws(&config, t).await {
-                    error!("error occured when handling websocket: {}", e);
+                if let Err(e) = handle_ws(config.clone(), t).await {
+                    error!("error occurred when handling websocket: {}", e);
                 }
             }
             Err(e) => {
@@ -274,7 +327,7 @@ async fn run(config: Config) {
         };
 
         tokio::time::sleep(std::time::Duration::from_secs(std::cmp::max(
-            (config.reconnect_delay_minutes() * 60) as u64,
+            reconnect_delay * 60,
             MIN_RECONNECT_DELAY as u64,
         )))
         .await;
@@ -285,25 +338,39 @@ async fn run(config: Config) {
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     pretty_env_logger::init();
 
-    debug!("Starting...");
+    debug!("Validating config...");
+    while !Config::exists() {
+        warn!("Config file does not exist, please create one by using the `riptide` cli utility");
+        tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+    }
 
+    debug!("Checking registration status...");
+    while !Config::is_registered() {
+        warn!("Agent is not registered, please register by using the `riptide` cli utility");
+        tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+    }
+
+    debug!("Starting...");
     let config: Config = tokio::task::spawn_blocking(Config::load_config).await??;
+    let config = Arc::new(RwLock::new(config));
 
     // spawn monitoring task to remove expired shares
     let monitor_config = config.clone();
     let monitor_handle = tokio::task::spawn(async move {
         loop {
-            tokio::time::sleep(Duration::from_secs(180)).await;
-            if let Err(e) = remove_expired_shares(&monitor_config).await {
+            tokio::time::sleep(Duration::from_secs(60)).await;
+            if let Err(e) = remove_expired_shares(monitor_config.clone()).await {
                 error!("Failed to remove expired shares: {}", e);
             }
         }
     });
 
-    tokio::pin!(monitor_handle);
+    let reload_timer = tokio::time::sleep(Duration::from_secs(5));
 
     let runner = run(config);
+    tokio::pin!(monitor_handle);
     tokio::pin!(runner);
+    tokio::pin!(reload_timer);
 
     loop {
         tokio::select! {
@@ -312,6 +379,20 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             _ = tokio::signal::ctrl_c() => {
                 info!("SIGINT recieved, shutting down");
                 break;
+            }
+
+            _ = &mut reload_timer => {
+                match Config::reload_requested() {
+                    Ok(true) => {
+                        info!("Reload requested, shutting down");
+                        break; //HACK: instead of breaking, we should just reload the config properly
+                    },
+                    Ok(_) => {},
+                    Err(e) => {
+                        error!("Failed to check for reload request: {}", e);
+                    }
+                }
+                reload_timer.as_mut().reset(Instant::now() + Duration::from_secs(5));
             }
 
             _ = &mut runner => {
